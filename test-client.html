@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stealth Chat - DB Destekli E2EE Test</title>
+    <!-- SignalR -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+    <!-- JSEncrypt for RSA (Asymmetric) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsencrypt/3.3.2/jsencrypt.min.js"></script>
+    <!-- CryptoJS for AES (Symmetric) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background: #121212; color: #fff; display: flex; gap: 20px; }
+        .client-box { flex: 1; border: 1px solid #333; padding: 15px; background: #1e1e1e; border-radius: 8px; }
+        input, button, textarea { padding: 8px; margin: 5px 0; border-radius: 4px; border: 1px solid #444; background: #333; color: white; width: calc(100% - 18px); box-sizing: border-box; }
+        textarea { font-family: monospace; font-size: 11px; resize: vertical; color: #aaa; }
+        button { background: #007bff; cursor: pointer; font-weight: bold; width: 100%; }
+        button:hover { background: #0056b3; }
+        .logs { height: 350px; overflow-y: scroll; border: 1px solid #444; padding: 10px; background: #000; font-family: monospace; font-size: 13px; margin-top: 10px; }
+        .msg-in { color: #00ff00; }
+        .msg-out { color: #ff9900; }
+        .msg-hist { color: #00ccff; }
+        .sys { color: #888; }
+        .enc { color: #ff0055; font-size: 11px; }
+        h2 { border-bottom: 1px solid #444; padding-bottom: 10px; margin-top: 0; }
+        h3 { font-size: 14px; margin-bottom: 5px; color: #ccc; }
+        .row { display: flex; gap: 10px; }
+        .row input { flex: 1; }
+    </style>
+</head>
+<body>
+
+    <!-- CLIENT 1 -->
+    <div class="client-box" id="client1">
+        <h2>Kullanıcı A</h2>
+        <input type="text" id="nick1" value="Ahmet" placeholder="Nickname">
+        <button onclick="initClient(1, 'nick1', 'log1', 'pubKey1', 'privKey1')">Giriş Yap & Geçmişi Çek</button>
+
+        <div style="margin-top:15px;">
+            <h3>🔑 Senin E2EE Anahtarların</h3>
+            <textarea id="pubKey1" rows="3" readonly placeholder="Public Key (Sunucuya giden)"></textarea>
+            <textarea id="privKey1" rows="3" readonly placeholder="Private Key (ASLA sunucuya gitmez!)" style="color: #ffaa00;"></textarea>
+        </div>
+
+        <div style="margin-top:20px; border-top:1px solid #444; padding-top:10px;">
+            <div class="row">
+                <input type="text" id="to1" value="Ayşe" placeholder="Alıcı">
+            </div>
+            <input type="text" id="msg1" placeholder="Gizli Mesajınız...">
+            <button onclick="sendMessage(1, 'nick1', 'to1', 'msg1')">Şifrele, DB'ye Kaydet & Gönder</button>
+        </div>
+        <div class="logs" id="log1"></div>
+    </div>
+
+    <!-- CLIENT 2 -->
+    <div class="client-box" id="client2">
+        <h2>Kullanıcı B</h2>
+        <input type="text" id="nick2" value="Ayşe" placeholder="Nickname">
+        <button onclick="initClient(2, 'nick2', 'log2', 'pubKey2', 'privKey2')">Giriş Yap & Geçmişi Çek</button>
+
+        <div style="margin-top:15px;">
+            <h3>🔑 Senin E2EE Anahtarların</h3>
+            <textarea id="pubKey2" rows="3" readonly placeholder="Public Key (Sunucuya giden)"></textarea>
+            <textarea id="privKey2" rows="3" readonly placeholder="Private Key (ASLA sunucuya gitmez!)" style="color: #ffaa00;"></textarea>
+        </div>
+
+        <div style="margin-top:20px; border-top:1px solid #444; padding-top:10px;">
+            <div class="row">
+                <input type="text" id="to2" value="Ahmet" placeholder="Alıcı">
+            </div>
+            <input type="text" id="msg2" placeholder="Gizli Mesajınız...">
+            <button onclick="sendMessage(2, 'nick2', 'to2', 'msg2')">Şifrele, DB'ye Kaydet & Gönder</button>
+        </div>
+        <div class="logs" id="log2"></div>
+    </div>
+
+    <script>
+        const API_BASE = "http://localhost:5032";
+        
+        const clients = {
+            1: { connection: null, rsa: new JSEncrypt(), logId: '' },
+            2: { connection: null, rsa: new JSEncrypt(), logId: '' }
+        };
+
+        function log(boxId, msg, type = 'sys') {
+            const logs = document.getElementById(boxId);
+            logs.innerHTML += `<div class="${type}">[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        async function initClient(clientId, nickInputId, logBoxId, pubBoxId, privBoxId) {
+            const nickname = document.getElementById(nickInputId).value;
+            const c = clients[clientId];
+            c.logId = logBoxId;
+
+            // Check if we already have keys for this user in localStorage
+            const savedPrivateKey = localStorage.getItem(`rsa_private_${nickname}`);
+            
+            if (savedPrivateKey) {
+                log(c.logId, `Cihazdaki (localStorage) kayıtlı RSA anahtarı yüklendi.`);
+                c.rsa.setPrivateKey(savedPrivateKey);
+            } else {
+                log(c.logId, `Yeni RSA Anahtarları üretiliyor...`);
+                c.rsa.getKey();
+                // Save new keys to localStorage so we don't lose them on refresh
+                localStorage.setItem(`rsa_private_${nickname}`, c.rsa.getPrivateKey());
+            }
+
+            const publicKey = c.rsa.getPublicKey();
+            const privateKey = c.rsa.getPrivateKey();
+
+            // Ekrana yazdır (Kullanıcı anahtarlarının nerede olduğunu görsün)
+            document.getElementById(pubBoxId).value = publicKey;
+            document.getElementById(privBoxId).value = privateKey;
+            
+            // Register PUBLIC KEY to the server (Private Key ASLA gönderilmez!)
+            await fetch(`${API_BASE}/api/auth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nickname: nickname, publicKey: publicKey })
+            });
+
+            // Fetch History from DB
+            log(c.logId, `DB'den sohbet geçmişi çekiliyor...`);
+            const res = await fetch(`${API_BASE}/api/message/history/${nickname}`);
+            const history = await res.json();
+            
+            history.forEach(msg => {
+                let aesKey = null;
+                // If I am the sender, decrypt the SenderEncryptedSymKey
+                if (msg.senderNickname === nickname && msg.senderEncryptedSymKey) {
+                    aesKey = c.rsa.decrypt(msg.senderEncryptedSymKey);
+                } 
+                // If I am the receiver, decrypt the ReceiverEncryptedSymKey
+                else if (msg.receiverNickname === nickname && msg.receiverEncryptedSymKey) {
+                    aesKey = c.rsa.decrypt(msg.receiverEncryptedSymKey);
+                }
+
+                if (aesKey) {
+                    const decryptedBytes = CryptoJS.AES.decrypt(msg.encryptedPayload, aesKey);
+                    const originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
+                    
+                    if (msg.senderNickname === nickname) {
+                        log(c.logId, `[Sen -> ${msg.receiverNickname}]: ${originalText}`, 'msg-out');
+                    } else {
+                        log(c.logId, `[${msg.senderNickname}]: ${originalText}`, 'msg-hist');
+                    }
+                } else {
+                    log(c.logId, `[ŞİFRELİ GEÇMİŞ] Mesaj çözülemedi (Önceki anahtarla şifrelenmiş olabilir)`, 'enc');
+                }
+            });
+
+            if (c.connection) await c.connection.stop();
+            c.connection = new signalR.HubConnectionBuilder()
+                .withUrl(`${API_BASE}/chat`)
+                .withAutomaticReconnect()
+                .build();
+
+            c.connection.on("ReceiveMessage", (from, receiverSymKey, encryptedPayload) => {
+                log(c.logId, `📥 Yeni Şifreli Mesaj Geldi`, 'sys');
+                // Alıcı kendi Private Key'i ile çözüyor
+                const aesKey = c.rsa.decrypt(receiverSymKey);
+                if (!aesKey) return log(c.logId, `❌ HATA: Simetrik anahtar çözülemedi!`, 'sys');
+
+                const decryptedBytes = CryptoJS.AES.decrypt(encryptedPayload, aesKey);
+                const originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
+
+                log(c.logId, `[${from}]: ${originalText}`, 'msg-in');
+            });
+
+            await c.connection.start();
+            await c.connection.invoke("Register", nickname);
+            log(c.logId, `✅ Canlı bağlantı sağlandı.`);
+        }
+
+        async function sendMessage(clientId, nickInputId, toInputId, msgInputId) {
+            const from = document.getElementById(nickInputId).value;
+            const to = document.getElementById(toInputId).value;
+            const msg = document.getElementById(msgInputId).value;
+            const c = clients[clientId];
+
+            if (!c.connection || c.connection.state !== signalR.HubConnectionState.Connected) {
+                return alert("Önce Bağlan butonuna basın.");
+            }
+
+            const res = await fetch(`${API_BASE}/api/auth/publickey/${to}`);
+            if (!res.ok) return log(c.logId, `❌ Alıcı (${to}) bulunamadı!`);
+            const data = await res.json();
+            const targetPublicKey = data.publicKey;
+
+            // 1. Generate AES Key & Encrypt Message
+            const aesKey = CryptoJS.lib.WordArray.random(16).toString();
+            const encryptedPayload = CryptoJS.AES.encrypt(msg, aesKey).toString();
+
+            // 2. Encrypt AES Key for Receiver (So receiver can read it)
+            const encryptorReceiver = new JSEncrypt();
+            encryptorReceiver.setPublicKey(targetPublicKey); // Alıcının Public Key'i
+            const receiverSymKey = encryptorReceiver.encrypt(aesKey);
+
+            // 3. Encrypt AES Key for Myself (So I can read it later from DB history)
+            const myPublicKey = c.rsa.getPublicKey(); 
+            const encryptorSelf = new JSEncrypt();
+            encryptorSelf.setPublicKey(myPublicKey); // Kendi Public Key'in
+            const senderSymKey = encryptorSelf.encrypt(aesKey);
+
+            // 4. Send to Server to be saved in DB and routed to receiver
+            await c.connection.invoke("SendPrivateMessage", from, to, senderSymKey, receiverSymKey, encryptedPayload);
+            
+            log(c.logId, `[Sen -> ${to}]: ${msg}`, 'msg-out');
+            document.getElementById(msgInputId).value = "";
+        }
+    </script>
+</body>
+</html>
