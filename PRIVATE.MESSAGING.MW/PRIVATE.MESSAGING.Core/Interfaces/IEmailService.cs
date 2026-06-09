@@ -1,4 +1,4 @@
-namespace PRIVATE.MESSAGING.MW.Services;
+namespace PRIVATE.MESSAGING.Core.Interfaces;
 
 public interface IEmailService
 {

@@ -3,8 +3,10 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
-using PRIVATE.MESSAGING.MW.Models.Other;
-using PRIVATE.MESSAGING.MW.Services;
+using PRIVATE.MESSAGING.Core.Entities.Other;
+using PRIVATE.MESSAGING.Core.Interfaces;
+using PRIVATE.MESSAGING.Services;
+using PRIVATE.MESSAGING.MW.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,6 +14,9 @@ builder.Services.Configure<MongoDbSettings>(builder.Configuration.GetSection("Mo
 builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("SmtpSettings"));
 
 builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<IMessageService, MessageService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
 
 builder.Services.AddSingleton<IMongoClient>(sp =>
 {
@@ -26,7 +31,6 @@ builder.Services.AddSingleton(sp =>
     return client.GetDatabase(settings.DatabaseName);
 });
 
-// JWT Authentication Configuration
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -43,7 +47,6 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]))
     };
     
-    // SignalR Authentication configuration
     options.Events = new JwtBearerEvents
     {
         OnMessageReceived = context =>
@@ -63,7 +66,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddControllers();
 builder.Services.AddSignalR(options => 
 {
-    options.MaximumReceiveMessageSize = 10 * 1024 * 1024; // 10MB limit for E2EE images
+    options.MaximumReceiveMessageSize = 10 * 1024 * 1024;
 });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -88,12 +91,11 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("AllowAll");
-// app.UseHttpsRedirection(); // Yorum satırına alındı: Chrome üzerinde SSL (Dev Cert) hatasını (ERR_CERT_AUTHORITY_INVALID) önlemek için.
 
-app.UseDefaultFiles(); // Allows index.html to be served automatically
-app.UseStaticFiles();  // Serves wwwroot contents
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
-app.UseAuthentication(); // MUST be before UseAuthorization
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();

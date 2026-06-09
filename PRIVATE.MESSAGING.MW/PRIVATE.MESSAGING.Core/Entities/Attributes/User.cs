@@ -1,7 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
-namespace PRIVATE.MESSAGING.MW.Models.Attributes;
+namespace PRIVATE.MESSAGING.Core.Entities.Attributes;
 
 public class User
 {

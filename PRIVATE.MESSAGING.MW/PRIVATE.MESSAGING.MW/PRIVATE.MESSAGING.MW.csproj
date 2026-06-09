@@ -19,4 +19,10 @@
       </Content>
     </ItemGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\PRIVATE.MESSAGING.Services\PRIVATE.MESSAGING.Services.csproj" />
+      <ProjectReference Include="..\PRIVATE.MESSAGING.Core\PRIVATE.MESSAGING.Core.csproj" />
+      <ProjectReference Include="..\PRIVATE.MESSAGING.DTOs\PRIVATE.MESSAGING.DTOs.csproj" />
+    </ItemGroup>
+
 </Project>

@@ -1,4 +1,4 @@
-namespace PRIVATE.MESSAGING.MW.Models.Other;
+namespace PRIVATE.MESSAGING.Core.Entities.Other;
 
 
 public class MongoDbSettings

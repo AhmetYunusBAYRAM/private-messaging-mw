@@ -1,4 +1,4 @@
-namespace PRIVATE.MESSAGING.MW.Models.Requests;
+namespace PRIVATE.MESSAGING.DTOs.Requests;
 
 public class UpdateProfilePictureRequest
 {

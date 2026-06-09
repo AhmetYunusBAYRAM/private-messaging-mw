@@ -1,9 +1,10 @@
 using System.Net;
 using System.Net.Mail;
 using Microsoft.Extensions.Options;
-using PRIVATE.MESSAGING.MW.Models.Other;
+using PRIVATE.MESSAGING.Core.Interfaces;
+using PRIVATE.MESSAGING.Core.Entities.Other;
 
-namespace PRIVATE.MESSAGING.MW.Services;
+namespace PRIVATE.MESSAGING.Services;
 
 public class EmailService : IEmailService
 {

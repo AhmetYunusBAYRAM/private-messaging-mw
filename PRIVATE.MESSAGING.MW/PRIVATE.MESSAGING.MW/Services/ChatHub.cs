@@ -2,11 +2,11 @@ using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using MongoDB.Driver;
-using PRIVATE.MESSAGING.MW.Models;
+using PRIVATE.MESSAGING.Core.Entities;
+using PRIVATE.MESSAGING.Core.Entities.Attributes;
 using System.Security.Claims;
-using PRIVATE.MESSAGING.MW.Models.Attributes;
 
-namespace PRIVATE.MESSAGING.MW.Services;
+namespace PRIVATE.MESSAGING.MW.Hubs;
 
 [Authorize]
 public class ChatHub : Hub
@@ -33,7 +33,6 @@ public class ChatHub : Hub
                 .Set(u => u.LastSeen, DateTime.UtcNow);
             await usersCol.UpdateOneAsync(u => u.Nickname == nickname, update);
 
-            // Broadcast to all
             await Clients.All.SendAsync("UserPresenceUpdate", nickname, true, DateTime.UtcNow);
         }
         await base.OnConnectedAsync();
@@ -44,8 +43,7 @@ public class ChatHub : Hub
         var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(myNickname)) return null;
 
-        // Check if either user blocked the other
-        var db = _messages.Database; // We need to access Users collection
+        var db = _messages.Database;
         var usersCol = db.GetCollection<User>("Users");
         
         var senderUser = await usersCol.Find(u => u.Nickname == myNickname).FirstOrDefaultAsync();
@@ -53,16 +51,14 @@ public class ChatHub : Hub
 
         if (senderUser == null || receiverUser == null) return null;
 
-        if (senderUser.BlockedUsers.Any(b => b.Nickname == to))
+        if (senderUser.BlockedUsers != null && senderUser.BlockedUsers.Any(b => b.Nickname == to))
         {
-            // The sender blocked the receiver, cannot send.
             throw new HubException($"You have blocked {to}. Unblock them to send messages.");
         }
 
-        var blockInfo = receiverUser.BlockedUsers.FirstOrDefault(b => b.Nickname == myNickname);
+        var blockInfo = receiverUser.BlockedUsers?.FirstOrDefault(b => b.Nickname == myNickname);
         if (blockInfo != null)
         {
-            // The receiver blocked the sender. Throw specific error with date!
             var localTime = blockInfo.BlockedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
             throw new HubException($"Bu kullanıcı sizi {localTime} tarihinde engelledi, ona mesaj gönderemezsiniz.");
         }
@@ -102,7 +98,7 @@ public class ChatHub : Hub
         var usersCol = db.GetCollection<User>("Users");
         
         var myUser = await usersCol.Find(u => u.Nickname == myNickname).FirstOrDefaultAsync();
-        if (myUser != null && myUser.BlockedUsers.Any(b => b.Nickname == targetNickname))
+        if (myUser != null && myUser.BlockedUsers != null && myUser.BlockedUsers.Any(b => b.Nickname == targetNickname))
         {
             throw new HubException("Bu kullanıcıyı engellediğiniz için ifade bırakamazsınız.");
         }
@@ -110,7 +106,7 @@ public class ChatHub : Hub
         var targetUser = await usersCol.Find(u => u.Nickname == targetNickname).FirstOrDefaultAsync();
         if (targetUser != null)
         {
-            var blockInfo = targetUser.BlockedUsers.FirstOrDefault(b => b.Nickname == myNickname);
+            var blockInfo = targetUser.BlockedUsers?.FirstOrDefault(b => b.Nickname == myNickname);
             if (blockInfo != null)
             {
                 var localTime = blockInfo.BlockedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
@@ -121,15 +117,13 @@ public class ChatHub : Hub
         string finalEmoji = emoji;
         if (msg.Reactions != null && msg.Reactions.TryGetValue(myNickname, out var existingEmoji) && existingEmoji == emoji)
         {
-            // Aynı emojiye tıklandıysa kaldır
             msg.Reactions.Remove(myNickname);
             var update = Builders<ChatMessage>.Update.Set(m => m.Reactions, msg.Reactions);
             await _messages.UpdateOneAsync(m => m.Id == messageId, update);
-            finalEmoji = ""; // Kaldırıldığını belirtmek için
+            finalEmoji = "";
         }
         else
         {
-            // Farklı emojiye tıklandıysa veya ilk kez atılıyorsa ekle/güncelle
             if (msg.Reactions == null) msg.Reactions = new Dictionary<string, string>();
             msg.Reactions[myNickname] = emoji;
             
@@ -137,7 +131,6 @@ public class ChatHub : Hub
             await _messages.UpdateOneAsync(m => m.Id == messageId, update);
         }
 
-        // Notify both parties if they are online
         if (_users.TryGetValue(msg.SenderNickname, out var senderId))
         {
             await Clients.Client(senderId).SendAsync("ReceiveReaction", messageId, myNickname, finalEmoji);
@@ -206,7 +199,6 @@ public class ChatHub : Hub
         var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(myNickname)) return;
 
-        // Find messages sent BY targetNickname TO myNickname that are unread
         var filter = Builders<ChatMessage>.Filter.And(
             Builders<ChatMessage>.Filter.Eq(m => m.SenderNickname, targetNickname),
             Builders<ChatMessage>.Filter.Eq(m => m.ReceiverNickname, myNickname),
@@ -221,7 +213,6 @@ public class ChatHub : Hub
 
         if (result.ModifiedCount > 0)
         {
-            // Notify the target that their messages were read
             if (_users.TryGetValue(targetNickname, out var targetId))
             {
                 await Clients.Client(targetId).SendAsync("MessagesRead", myNickname);

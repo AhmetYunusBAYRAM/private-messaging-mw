@@ -1,7 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
-namespace PRIVATE.MESSAGING.MW.Models;
+namespace PRIVATE.MESSAGING.Core.Entities;
 
 public class ChatMessage
 {
@@ -25,7 +25,6 @@ public class ChatMessage
     public bool IsRead { get; set; } = false;
     public DateTime? ReadAt { get; set; }
     
-    // Key: Nickname, Value: Emoji (e.g., "❤️", "👍")
     public Dictionary<string, string> Reactions { get; set; } = new();
 
     public List<string> DeletedFor { get; set; } = new();
