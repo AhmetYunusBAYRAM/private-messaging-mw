@@ -33,20 +33,21 @@
         .profile-header { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; }
         .profile-header img { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 2px solid #007bff; }
         .logout-btn { background: #dc3545; width: auto; font-size:10px; padding:3px 10px; float:right; }
+        .block-btn { background: #dc3545; margin: 0; }
+        .block-btn:hover { background: #c82333; }
+        .blocked-user { color: #ff6b6b; font-size: 13px; padding: 5px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center;}
     </style>
 </head>
 <body>
 
-    <!-- SCRIPT FONKSİYONLARI -->
     <script>
-        const API_BASE = "http://localhost:5032";
+        const API_BASE = window.location.origin.includes("localhost") && window.location.port !== "" ? window.location.origin : "http://localhost:5032";
         
         const clients = {
-            1: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '' },
-            2: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '' }
+            1: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [] },
+            2: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [] }
         };
 
-        // Sayfa yüklendiğinde Auto-Login dene
         window.onload = () => {
             checkAutoLogin(1);
             checkAutoLogin(2);
@@ -71,12 +72,12 @@
                 c.email = email;
                 c.rsa.setPrivateKey(privateKey);
                 
-                // Arayüzü Uygulamaya Geçir
                 document.getElementById(`auth${cId}`).style.display = 'none';
                 document.getElementById(`app${cId}`).style.display = 'block';
                 document.getElementById(`myName${cId}`).innerText = c.nickname;
 
                 await fetchProfile(cId);
+                await loadBlockedListUI(cId);
                 await loadContacts(cId);
                 await loadInbox(cId);
                 await startSignalR(cId);
@@ -117,7 +118,6 @@
             const otp = document.getElementById(`otp${cId}`).value;
             const c = clients[cId];
 
-            // RSA Key Yönetimi
             let savedPrivateKey = localStorage.getItem(`rsa_private_${email}`);
             if (!savedPrivateKey) {
                 c.rsa.getKey();
@@ -139,7 +139,6 @@
             c.token = data.token;
             c.nickname = data.nickname;
 
-            // Auto-Login için kaydet
             localStorage.setItem(`token${cId}`, c.token);
             localStorage.setItem(`nickname${cId}`, c.nickname);
             localStorage.setItem(`email${cId}`, email);
@@ -149,6 +148,7 @@
             document.getElementById(`myName${cId}`).innerText = c.nickname;
 
             await fetchProfile(cId);
+            await loadBlockedListUI(cId);
             await loadContacts(cId);
             await loadInbox(cId);
             await startSignalR(cId);
@@ -169,7 +169,6 @@
                 const decryptedBytes = CryptoJS.AES.decrypt(encryptedPayload, aesKey);
                 const originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
                 
-                // Eğer ekranda açık olan kişi o ise loga yaz, değilse sadece inbox yenilensin
                 if (document.getElementById(`to${cId}`).value === from) {
                     log(cId, `[${from}]: ${originalText}`, 'msg-in');
                 }
@@ -177,7 +176,7 @@
             });
 
             await c.connection.start();
-            log(cId, `✅ Bağlantı sağlandı (Auto-Login aktif)`);
+            log(cId, `✅ Bağlantı sağlandı`);
         }
 
         async function fetchProfile(cId) {
@@ -200,10 +199,7 @@
 
                 const res = await fetch(`${API_BASE}/api/user/profile-picture`, {
                     method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${c.token}`
-                    },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${c.token}` },
                     body: JSON.stringify({ base64Image: base64 })
                 });
 
@@ -222,28 +218,17 @@
                     headers: { 'Authorization': `Bearer ${c.token}` }
                 });
                 
-                if (!res.ok) {
-                    const text = await res.text();
-                    console.error(`Rehber çekme hatası (Client ${cId}): ${res.status} - ${text}`);
-                    return alert(`Rehber çekilemedi! Hata kodu: ${res.status}`);
-                }
-
+                if (!res.ok) return;
                 const contacts = await res.json();
-                console.log(`Client ${cId} için gelen rehber verisi:`, contacts);
                 
                 const select = document.getElementById(`contacts${cId}`);
                 select.innerHTML = '<option value="">-- Sohbet Başlatılacak Kişiyi Seç --</option>';
-                
-                if (contacts.length === 0) {
-                    console.warn(`Veritabanında ${c.nickname} haricinde BŞKA HİÇBİR KAYITLI KULLANICI YOK!`);
-                }
 
                 contacts.forEach(u => {
                     select.innerHTML += `<option value="${u.nickname}">${u.nickname}</option>`;
                 });
             } catch (err) {
                 console.error("loadContacts JS hatası:", err);
-                alert("Rehber yüklenirken bir JavaScript hatası oluştu, konsola (F12) bakınız.");
             }
         }
 
@@ -252,6 +237,7 @@
             if(val) {
                 document.getElementById(`to${cId}`).value = val;
                 loadHistory(cId);
+                updateBlockButtonState(cId, val);
             }
         }
 
@@ -260,6 +246,7 @@
             const res = await fetch(`${API_BASE}/api/user/inbox`, {
                 headers: { 'Authorization': `Bearer ${c.token}` }
             });
+            if(!res.ok) return;
             const inboxData = await res.json();
 
             const inboxContainer = document.getElementById(`inboxList${cId}`);
@@ -271,7 +258,7 @@
                 if (msg.senderNickname === c.nickname) aesKey = c.rsa.decrypt(msg.senderEncryptedSymKey);
                 else if (msg.receiverNickname === c.nickname) aesKey = c.rsa.decrypt(msg.receiverEncryptedSymKey);
 
-                let snippet = "[Şifreli Mesaj Çözülemedi]";
+                let snippet = "[Şifreli Mesaj]";
                 if (aesKey) {
                     const decryptedBytes = CryptoJS.AES.decrypt(msg.encryptedPayload, aesKey);
                     snippet = decryptedBytes.toString(CryptoJS.enc.Utf8);
@@ -281,7 +268,11 @@
                 
                 const div = document.createElement('div');
                 div.className = 'inbox-item';
-                div.onclick = () => { document.getElementById(`to${cId}`).value = item.contactNickname; loadHistory(cId); };
+                div.onclick = () => { 
+                    document.getElementById(`to${cId}`).value = item.contactNickname; 
+                    loadHistory(cId); 
+                    updateBlockButtonState(cId, item.contactNickname);
+                };
                 div.innerHTML = `
                     <img src="${picSrc}">
                     <div class="inbox-details">
@@ -334,12 +325,15 @@
             const msg = document.getElementById(`msg${cId}`).value;
             if (!to || !msg) return;
 
+            if (c.blocked.includes(to)) {
+                return alert("Bu kullanıcıyı engellediniz. Mesaj göndermek için engeli kaldırın.");
+            }
+
             const res = await fetch(`${API_BASE}/api/auth/publickey/${to}`);
             if (!res.ok) return alert(`Alıcı (${to}) bulunamadı!`);
             const data = await res.json();
             const targetPublicKey = data.publicKey;
 
-            // Şifreleme
             const aesKey = CryptoJS.lib.WordArray.random(16).toString();
             const encryptedPayload = CryptoJS.AES.encrypt(msg, aesKey).toString();
 
@@ -352,11 +346,91 @@
             encryptorSelf.setPublicKey(myPublicKey);
             const senderSymKey = encryptorSelf.encrypt(aesKey);
 
-            await c.connection.invoke("SendPrivateMessage", to, senderSymKey, receiverSymKey, encryptedPayload);
-            
-            log(cId, `[Sen -> ${to}]: ${msg}`, 'msg-out');
-            document.getElementById(`msg${cId}`).value = "";
-            await loadInbox(cId);
+            try {
+                await c.connection.invoke("SendPrivateMessage", to, senderSymKey, receiverSymKey, encryptedPayload);
+                log(cId, `[Sen -> ${to}]: ${msg}`, 'msg-out');
+                document.getElementById(`msg${cId}`).value = "";
+                await loadInbox(cId);
+            } catch (err) {
+                // SignalR exceptions stringify nicely but might have prefix, let's just alert the message.
+                log(cId, `❌ HATA: ${err.message}`, 'enc');
+                alert(err.message);
+            }
+        }
+
+        async function loadBlockedListUI(cId) {
+            const c = clients[cId];
+            const res = await fetch(`${API_BASE}/api/user/blocked`, {
+                headers: { 'Authorization': `Bearer ${c.token}` }
+            });
+            if (res.ok) {
+                c.blocked = await res.json();
+                const container = document.getElementById(`blockedList${cId}`);
+                container.innerHTML = '';
+                if(c.blocked.length === 0) {
+                    container.innerHTML = '<span style="color:#666; font-size:12px; padding:5px;">Engellenen kimse yok.</span>';
+                }
+                c.blocked.forEach(bUser => {
+                    container.innerHTML += `
+                        <div class="blocked-user">
+                            ${bUser} 
+                            <button style="width:auto; padding:2px 5px; font-size:10px; background:#28a745; margin:0;" onclick="unblockDirect(${cId}, '${bUser}')">Kaldır</button>
+                        </div>
+                    `;
+                });
+                
+                // Eğer ekranda o kişiyle chat açıksa butonu güncelle
+                const target = document.getElementById(`to${cId}`).value;
+                if(target) updateBlockButtonState(cId, target);
+            }
+        }
+
+        async function toggleBlock(cId) {
+            const c = clients[cId];
+            const target = document.getElementById(`to${cId}`).value;
+            if (!target) return alert("Önce bir sohbet seçin.");
+
+            const isBlocked = c.blocked.includes(target);
+            const endpoint = isBlocked ? `/api/user/unblock/${target}` : `/api/user/block/${target}`;
+
+            const res = await fetch(`${API_BASE}${endpoint}`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${c.token}` }
+            });
+
+            if (res.ok) {
+                alert(isBlocked ? "Engel kaldırıldı." : "Kullanıcı engellendi.");
+                await loadBlockedListUI(cId);
+                await loadInbox(cId);
+                await loadContacts(cId);
+            }
+        }
+
+        async function unblockDirect(cId, target) {
+            const c = clients[cId];
+            const res = await fetch(`${API_BASE}/api/user/unblock/${target}`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${c.token}` }
+            });
+
+            if (res.ok) {
+                alert("Engel kaldırıldı.");
+                await loadBlockedListUI(cId);
+                await loadInbox(cId);
+                await loadContacts(cId);
+            }
+        }
+
+        function updateBlockButtonState(cId, targetNickname) {
+            const c = clients[cId];
+            const btn = document.getElementById(`blockBtn${cId}`);
+            if (c.blocked.includes(targetNickname)) {
+                btn.innerText = "Engeli Kaldır";
+                btn.style.background = "#28a745"; // Green for unblock
+            } else {
+                btn.innerText = "Engelle";
+                btn.style.background = "#dc3545"; // Red for block
+            }
         }
     </script>
 
@@ -406,10 +480,15 @@
                         <!-- Inbox itemlar buraya dolacak -->
                     </div>
 
+                    <h4 style="margin-top:15px;">Engellenen Kişiler <button style="width:auto; padding:3px 10px; font-size:10px; float:right;" onclick="loadBlockedListUI(${id})">Yenile</button></h4>
+                    <div class="inbox-list" id="blockedList${id}" style="height:60px; margin-bottom:15px;">
+                        <!-- Blocked list -->
+                    </div>
+
                     <h4>Sohbet Penceresi</h4>
                     <div class="row">
                         <input type="text" id="to${id}" placeholder="Kiminle Konuşulacak? (Nickname)" readonly style="background:#222; color:#888;">
-                        <button style="width:70px; margin:0;" onclick="loadHistory(${id})">Çek</button>
+                        <button id="blockBtn${id}" class="block-btn" style="width:100px; margin:0;" onclick="toggleBlock(${id})">Engelle</button>
                     </div>
                     
                     <div class="logs" id="log${id}"></div>

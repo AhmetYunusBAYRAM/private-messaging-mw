@@ -17,5 +17,13 @@ public class User
     public string? Otp { get; set; }
     public DateTime? OtpExpiry { get; set; }
 
+    public List<BlockedUserInfo> BlockedUsers { get; set; } = new();
+
     public DateTime LastSeen { get; set; }
+}
+
+public class BlockedUserInfo
+{
+    public string Nickname { get; set; } = string.Empty;
+    public DateTime BlockedAt { get; set; }
 }
