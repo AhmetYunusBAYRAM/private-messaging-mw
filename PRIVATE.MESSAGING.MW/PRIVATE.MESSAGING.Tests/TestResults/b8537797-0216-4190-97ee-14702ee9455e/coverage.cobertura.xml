@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <coverage line-rate="0.7489" branch-rate="0.5113" version="1.9" timestamp="1781024999" lines-covered="528" lines-valid="705" branches-covered="90" branches-valid="176">
   <sources>
-    <source>/Users/ahmetyunusbayram/Desktop/clone/private-messaging-mw/PRIVATE.MESSAGING.MW/</source>
+    <source>/Users/ahmetyunusbayram/Desktop/clone/private-messaging-mw/PRIVATE.MESSAGING.API/</source>
   </sources>
   <packages>
     <package name="PRIVATE.MESSAGING.DTOs" line-rate="0.5861999999999999" branch-rate="1" complexity="29">

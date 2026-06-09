@@ -5,6 +5,7 @@
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+        <RootNamespace>PRIVATE.MESSAGING.MW</RootNamespace>
     </PropertyGroup>
 
     <ItemGroup>
