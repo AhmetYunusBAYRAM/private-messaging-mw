@@ -35,19 +35,14 @@ public class UserController : ControllerBase
         return Ok(new { message = "Profile picture updated" });
     }
 
-    // Public endpoint to view others' profiles
+    [Authorize]
     [HttpGet("{nickname}/profile")]
     public async Task<IActionResult> GetProfile(string nickname)
     {
         var targetUser = await _users.Find(u => u.Nickname == nickname).FirstOrDefaultAsync();
         if (targetUser == null) return NotFound();
 
-        // Optional: Get the caller's nickname if authorized to check for blocks
-        string callerNickname = null;
-        if (User.Identity.IsAuthenticated)
-        {
-            callerNickname = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        }
+        var callerNickname = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
         // Hide sensitive profile data if target user has blocked the caller
         if (callerNickname != null && targetUser.BlockedUsers.Any(b => b.Nickname == callerNickname))
@@ -55,7 +50,6 @@ public class UserController : ControllerBase
             return Ok(new { 
                 nickname = targetUser.Nickname, 
                 publicKey = targetUser.PublicKey, 
-                // Return generic empty avatar and hide last seen
                 profilePictureBase64 = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=",
                 lastSeen = (DateTime?)null 
             });

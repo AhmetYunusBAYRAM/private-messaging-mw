@@ -327,7 +327,9 @@
                 return alert("Bu kullanıcıyı engellediniz. Mesaj göndermek için engeli kaldırın.");
             }
 
-            const res = await fetch(`${API_BASE}/api/auth/publickey/${to}`);
+            const res = await fetch(`${API_BASE}/api/auth/publickey/${to}`, {
+                headers: { 'Authorization': `Bearer ${c.token}` }
+            });
             if (!res.ok) return alert(`Alıcı (${to}) bulunamadı!`);
             const data = await res.json();
             const targetPublicKey = data.publicKey;
@@ -580,7 +582,9 @@
         // --- PROFILE & INBOX & BLOCKS ---
         async function fetchProfile(cId) {
             const c = clients[cId];
-            const res = await fetch(`${API_BASE}/api/user/${c.nickname}/profile`);
+            const res = await fetch(`${API_BASE}/api/user/${c.nickname}/profile`, {
+                headers: { 'Authorization': `Bearer ${c.token}` }
+            });
             const data = await res.json();
             if (data.profilePictureBase64) {
                 document.getElementById(`myPic${cId}`).src = data.profilePictureBase64;

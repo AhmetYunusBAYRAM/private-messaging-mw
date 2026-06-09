@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
@@ -141,6 +142,7 @@ public class AuthController : ControllerBase
         });
     }
 
+    [Authorize]
     [HttpGet("publickey/{nickname}")]
     public async Task<IActionResult> GetPublicKey(string nickname)
     {
