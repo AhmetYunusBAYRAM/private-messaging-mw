@@ -13,4 +13,5 @@ public interface IUserService
     Task<bool> BlockUserAsync(string myNickname, string targetNickname);
     Task<bool> UnblockUserAsync(string myNickname, string targetNickname);
     Task<IEnumerable<string>> GetBlockedUsersAsync(string myNickname);
+    Task<IEnumerable<object>> GetDeviceLogsAsync(string nickname);
 }

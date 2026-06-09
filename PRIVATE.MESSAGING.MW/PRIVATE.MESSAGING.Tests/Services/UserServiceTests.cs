@@ -3,48 +3,48 @@ using MongoDB.Driver;
 using Moq;
 using PRIVATE.MESSAGING.Core.Entities;
 using PRIVATE.MESSAGING.Core.Entities.Attributes;
+using PRIVATE.MESSAGING.Core.Interfaces;
 using PRIVATE.MESSAGING.Services;
-using PRIVATE.MESSAGING.Tests.Helpers;
 using Xunit;
 
 namespace PRIVATE.MESSAGING.Tests.Services;
 
 public class UserServiceTests
 {
-    private static (UserService service, Mock<IMongoCollection<User>> userCollection) CreateService(
+    private static (UserService service, Mock<IUserRepository> repo) CreateService(
         List<User> users,
-        List<Core.Entities.ChatMessage>? messages = null)
+        List<ChatMessage>? messages = null)
     {
-        messages ??= new List<Core.Entities.ChatMessage>();
+        var repo = new Mock<IUserRepository>();
 
-        var userCollection = MongoMockHelper.CreateCollectionMock(users);
-        var msgCollection = MongoMockHelper.CreateCollectionMock(messages);
+        repo.Setup(r => r.GetByNicknameAsync(It.IsAny<string>()))
+            .ReturnsAsync((string nick) => users.FirstOrDefault(u => u.Nickname == nick));
 
-        userCollection.Setup(c => c.UpdateOneAsync(
-            It.IsAny<FilterDefinition<User>>(),
-            It.IsAny<UpdateDefinition<User>>(),
-            It.IsAny<UpdateOptions>(),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UpdateResult.Acknowledged(1, 1, null));
+        repo.Setup(r => r.UpdateProfilePictureAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync((string nick, string img) => users.Any(u => u.Nickname == nick));
 
-        var db = new Mock<IMongoDatabase>();
-        db.Setup(d => d.GetCollection<User>("Users", It.IsAny<MongoCollectionSettings>()))
-          .Returns(userCollection.Object);
-        db.Setup(d => d.GetCollection<Core.Entities.ChatMessage>("ChatMessages", It.IsAny<MongoCollectionSettings>()))
-          .Returns(msgCollection.Object);
+        repo.Setup(r => r.SearchContactsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync((string myNick, string q, string? c, int limit) => 
+            {
+                var qUsers = users.Where(u => u.Nickname != myNick && u.Nickname.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
+                return (qUsers, null, qUsers.Count);
+            });
+
+        repo.Setup(r => r.AddBlockedUserAsync(It.IsAny<string>(), It.IsAny<BlockedUserInfo>()))
+            .ReturnsAsync(true);
+
+        repo.Setup(r => r.RemoveBlockedUserAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(true);
 
         var cacheMock = new Mock<IDistributedCache>();
-
-        return (new UserService(db.Object, cacheMock.Object), userCollection);
+        return (new UserService(repo.Object, cacheMock.Object), repo);
     }
 
     [Fact]
     public async Task GetProfileAsync_WhenUserNotFound_ReturnsNull()
     {
         var (service, _) = CreateService(new List<User>());
-
         var result = await service.GetProfileAsync("ghost", "caller");
-
         Assert.Null(result);
     }
 
@@ -54,7 +54,7 @@ public class UserServiceTests
         var targetUser = new User
         {
             Nickname = "alice",
-            PublicKey = "alice-pk",
+            IdentityPublicKey = "alice-ipk",
             BlockedUsers = new List<BlockedUserInfo>
             {
                 new() { Nickname = "bob", BlockedAt = DateTime.UtcNow }
@@ -105,16 +105,13 @@ public class UserServiceTests
     [Fact]
     public async Task BlockUserAsync_CallsUpdateOne()
     {
-        var user = new User { Nickname = "alice", BlockedUsers = new List<BlockedUserInfo>() };
-        var (service, collection) = CreateService(new List<User> { user });
+        var user1 = new User { Nickname = "alice", BlockedUsers = new List<BlockedUserInfo>() };
+        var user2 = new User { Nickname = "bob" };
+        var (service, collection) = CreateService(new List<User> { user1, user2 });
 
         await service.BlockUserAsync("alice", "bob");
 
-        collection.Verify(c => c.UpdateOneAsync(
-            It.IsAny<FilterDefinition<User>>(),
-            It.IsAny<UpdateDefinition<User>>(),
-            It.IsAny<UpdateOptions>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        collection.Verify(r => r.AddBlockedUserAsync("alice", It.Is<BlockedUserInfo>(b => b.Nickname == "bob")), Times.Once);
     }
 
     [Fact]
@@ -123,20 +120,13 @@ public class UserServiceTests
         var user = new User
         {
             Nickname = "alice",
-            BlockedUsers = new List<BlockedUserInfo>
-            {
-                new() { Nickname = "bob", BlockedAt = DateTime.UtcNow }
-            }
+            BlockedUsers = new List<BlockedUserInfo> { new() { Nickname = "bob" } }
         };
         var (service, collection) = CreateService(new List<User> { user });
 
         await service.UnblockUserAsync("alice", "bob");
 
-        collection.Verify(c => c.UpdateOneAsync(
-            It.IsAny<FilterDefinition<User>>(),
-            It.IsAny<UpdateDefinition<User>>(),
-            It.IsAny<UpdateOptions>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        collection.Verify(r => r.RemoveBlockedUserAsync("alice", "bob"), Times.Once);
     }
 
     [Fact]
@@ -158,5 +148,34 @@ public class UserServiceTests
         var result = await service.GetBlockedUsersAsync("ghost");
 
         Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetInboxAsync_GroupsMessagesAndReturnsInbox()
+    {
+        var user = new User { Nickname = "alice" };
+        var bob = new User { Nickname = "bob" };
+        var messages = new List<ChatMessage>
+        {
+            new ChatMessage { Id = "1", SenderNickname = "alice", ReceiverNickname = "bob", Timestamp = DateTime.UtcNow.AddMinutes(-5), IsRead = true },
+            new ChatMessage { Id = "2", SenderNickname = "bob", ReceiverNickname = "alice", Timestamp = DateTime.UtcNow, IsRead = false }
+        };
+        
+        var (service, repo) = CreateService(new List<User> { user, bob });
+        
+        repo.Setup(r => r.GetInboxMessagesAsync("alice"))
+            .ReturnsAsync(messages);
+            
+        repo.Setup(r => r.GetUsersByNicknamesAsync(It.IsAny<IEnumerable<string>>()))
+            .ReturnsAsync(new List<User> { bob });
+
+        var result = await service.GetInboxAsync("alice");
+
+        var list = result.ToList();
+        Assert.Single(list);
+        var json = System.Text.Json.JsonSerializer.Serialize(list[0]);
+        Assert.Contains("bob", json);
+        Assert.Contains("unreadCount", json);
+        Assert.Contains("1", json); // 1 unread message
     }
 }

@@ -24,7 +24,9 @@ public class ExceptionHandlingMiddleware
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unhandled exception: {Message}", ex.Message);
+            _logger.LogError("Unhandled exception: {Type} - {Message}", ex.GetType().Name, ex.Message);
+            Console.WriteLine("STACK TRACE (safely caught):");
+            try { Console.WriteLine(ex.StackTrace); } catch { Console.WriteLine("[StackTrace okunamadı]"); }
             await HandleExceptionAsync(context, ex);
         }
     }

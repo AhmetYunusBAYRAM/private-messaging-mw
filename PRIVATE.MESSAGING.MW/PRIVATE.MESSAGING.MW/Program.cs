@@ -7,6 +7,7 @@ using MongoDB.Driver;
 using PRIVATE.MESSAGING.Core.Entities.Other;
 using PRIVATE.MESSAGING.Core.Interfaces;
 using PRIVATE.MESSAGING.Services;
+using PRIVATE.MESSAGING.Services.Repositories;
 using PRIVATE.MESSAGING.MW.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -23,6 +24,7 @@ builder.Services.AddInMemoryRateLimiting();
 builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 
 builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
@@ -69,6 +71,11 @@ builder.Services.AddAuthentication(options =>
     {
         OnMessageReceived = context =>
         {
+            if (context.Request.Cookies.ContainsKey("token"))
+            {
+                context.Token = context.Request.Cookies["token"];
+            }
+            
             var accessToken = context.Request.Query["access_token"];
             var path = context.HttpContext.Request.Path;
             if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/chat"))

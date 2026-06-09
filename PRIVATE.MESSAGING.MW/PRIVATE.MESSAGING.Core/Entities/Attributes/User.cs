@@ -11,8 +11,15 @@ public class User
 
     public string Email { get; set; } = string.Empty;
     public string Nickname { get; set; } = string.Empty;
-    public string PublicKey { get; set; } = string.Empty;
-    public string EncryptedPrivateKey { get; set; } = string.Empty;
+    public string IdentityPublicKey { get; set; } = string.Empty;
+    public string EncryptedIdentityPrivateKey { get; set; } = string.Empty;
+    
+    public string SignedPreKeyPublic { get; set; } = string.Empty;
+    public string EncryptedSignedPrePrivateKey { get; set; } = string.Empty;
+    public string SignedPreKeySignature { get; set; } = string.Empty;
+    
+    public List<PreKeyInfo> OneTimePreKeys { get; set; } = new();
+
     public string ProfilePictureBase64 { get; set; } = string.Empty;
     
     public string? Otp { get; set; }
@@ -30,6 +37,7 @@ public class User
 
 public class DeviceLog
 {
+    public string DeviceId { get; set; } = string.Empty;
     public string IpAddress { get; set; } = string.Empty;
     public string DeviceName { get; set; } = string.Empty;
     public DateTime LastActiveAt { get; set; }

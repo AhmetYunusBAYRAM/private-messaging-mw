@@ -31,14 +31,14 @@ public class ChatHub : Hub
         await base.OnConnectedAsync();
     }
 
-    public async Task<string?> SendPrivateMessage(string to, string senderSymKey, Dictionary<string, string> ephemeralSymKeys, string signature, string payload, string? replyToMessageId = null)
+    public async Task<string?> SendPrivateMessage(string to, string senderEncryptedKey, Dictionary<string, string> receiverEncryptedKeys, string commonEncryptedPayload, string signature, string? replyToMessageId = null)
     {
         var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(myNickname)) return null;
 
         try
         {
-            var chatMsg = await _chatService.SendPrivateMessageAsync(myNickname, to, senderSymKey, ephemeralSymKeys, signature, payload, replyToMessageId);
+            var chatMsg = await _chatService.SendPrivateMessageAsync(myNickname, to, senderEncryptedKey, receiverEncryptedKeys, commonEncryptedPayload, signature, replyToMessageId);
 
             var activeConnections = _chatService.GetActiveConnections(to);
             foreach(var kvp in activeConnections)
@@ -46,9 +46,9 @@ public class ChatHub : Hub
                 var deviceId = kvp.Key;
                 var connId = kvp.Value.ConnectionId;
                 
-                if (chatMsg.ReceiverEphemeralSymKeys != null && chatMsg.ReceiverEphemeralSymKeys.TryGetValue(deviceId, out var receiverSymKey))
+                if (chatMsg.ReceiverEncryptedPayloads != null && chatMsg.ReceiverEncryptedPayloads.TryGetValue(deviceId, out var receiverKey))
                 {
-                    await Clients.Client(connId).SendAsync("ReceiveMessage", chatMsg.Id, myNickname, receiverSymKey, signature, payload, replyToMessageId);
+                    await Clients.Client(connId).SendAsync("ReceiveMessage", chatMsg.Id, myNickname, $"{receiverKey}||{chatMsg.CommonEncryptedPayload}", signature, replyToMessageId);
                 }
             }
 
@@ -124,9 +124,9 @@ public class ChatHub : Hub
             var deviceId = devIdObj?.ToString();
             if (!string.IsNullOrEmpty(deviceId))
             {
-                _chatService.UserDisconnected(nickname, deviceId);
+                var wasRemoved = _chatService.UserDisconnected(nickname, deviceId, Context.ConnectionId);
                 
-                if (!_chatService.GetActiveConnections(nickname).Any())
+                if (wasRemoved && !_chatService.GetActiveConnections(nickname).Any())
                 {
                     await _chatService.UpdateOnlineStatusAsync(nickname, false);
                     await Clients.All.SendAsync("UserPresenceUpdate", nickname, false, DateTime.UtcNow);
@@ -155,12 +155,17 @@ public class ChatHub : Hub
     public async Task SyncMessages(string lastMessageId)
     {
         var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (string.IsNullOrEmpty(myNickname) || string.IsNullOrEmpty(lastMessageId)) return;
+        var deviceId = Context.Items["deviceId"] as string;
+
+        if (string.IsNullOrEmpty(myNickname) || string.IsNullOrEmpty(lastMessageId) || string.IsNullOrEmpty(deviceId)) return;
 
         var missed = await _chatService.SyncMissedMessagesAsync(myNickname, lastMessageId);
         foreach (var msg in missed)
         {
-            await Clients.Caller.SendAsync("ReceiveMessage", msg.Id, msg.SenderNickname, msg.ReceiverEncryptedSymKey, msg.DigitalSignature, msg.EncryptedPayload, msg.ReplyToMessageId);
+            if (msg.ReceiverEncryptedPayloads != null && msg.ReceiverEncryptedPayloads.TryGetValue(deviceId, out var payload))
+            {
+                await Clients.Caller.SendAsync("ReceiveMessage", msg.Id, msg.SenderNickname, payload, msg.DigitalSignature, msg.ReplyToMessageId);
+            }
         }
     }
 

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PRIVATE.MESSAGING.DTOs.Requests;
 using PRIVATE.MESSAGING.Core.Interfaces;
+using PRIVATE.MESSAGING.DTOs.Responses;
 using PRIVATE.MESSAGING.MW.Filters;
 using System.Security.Claims;
 
@@ -22,7 +23,7 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
-        var result = await _authService.RegisterAsync(request.Email, request.Nickname, request.PublicKey, request.EncryptedPrivateKey);
+        var result = await _authService.RegisterAsync(request.Email, request.Nickname, request.Keys);
         if (!result.Success) return BadRequest(new { message = result.Message });
 
         return Ok(new { message = result.Message });
@@ -42,16 +43,26 @@ public class AuthController : ControllerBase
     [HttpPost("verify-otp")]
     public async Task<IActionResult> VerifyOtp([FromBody] VerifyOtpRequest request)
     {
-        var result = await _authService.VerifyOtpAsync(request.Email, request.Otp);
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "Bilinmiyor";
+        var result = await _authService.VerifyOtpAsync(request.Email, request.Otp, ip, request.DeviceName, request.DeviceId);
         if (!result.Success) return BadRequest(new { message = result.Message });
 
-        return Ok(new
+        if (result.Data is VerifyOtpResponseDto dto)
         {
-            token = result.Token,
-            refreshToken = result.RefreshToken,
-            nickname = result.Nickname,
-            encryptedPrivateKey = result.EncryptedPrivateKey
-        });
+            var cookieOptions = new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.None,
+                Expires = DateTime.UtcNow.AddDays(7)
+            };
+            Response.Cookies.Append("token", dto.Token, cookieOptions);
+            Response.Cookies.Append("refreshToken", dto.RefreshToken, cookieOptions);
+            
+            // We can still return them for now, but frontend will stop using them from JSON.
+        }
+
+        return Ok(result.Data);
     }
 
     [HttpPost("refresh-token")]
@@ -59,6 +70,16 @@ public class AuthController : ControllerBase
     {
         var result = await _authService.RefreshTokenAsync(request.ExpiredToken, request.RefreshToken);
         if (!result.Success) return Unauthorized(new { message = result.Message });
+
+        var cookieOptions = new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.None,
+            Expires = DateTime.UtcNow.AddDays(7)
+        };
+        Response.Cookies.Append("token", result.Token, cookieOptions);
+        Response.Cookies.Append("refreshToken", result.RefreshToken, cookieOptions);
 
         return Ok(new
         {
@@ -74,18 +95,18 @@ public class AuthController : ControllerBase
         var email = User.FindFirst(ClaimTypes.Email)?.Value;
         if (string.IsNullOrEmpty(email)) return Unauthorized();
 
-        var result = await _authService.ResetKeysAsync(email, request.PublicKey, request.EncryptedPrivateKey);
+        var result = await _authService.ResetKeysAsync(email, request.Keys);
         if (!result.Success) return BadRequest(new { message = result.Message });
 
         return Ok(new { message = result.Message });
     }
 
     [Authorize]
-    [HttpGet("publickey/{nickname}")]
-    public async Task<IActionResult> GetPublicKey(string nickname)
+    [HttpGet("publickey-bundle/{nickname}")]
+    public async Task<IActionResult> GetPublicKeyBundle(string nickname)
     {
-        var publicKey = await _authService.GetPublicKeyAsync(nickname);
-        if (publicKey == null) return NotFound();
-        return Ok(new { publicKey });
+        var bundle = await _authService.GetPublicKeyBundleAsync(nickname);
+        if (bundle == null) return NotFound();
+        return Ok(bundle);
     }
 }

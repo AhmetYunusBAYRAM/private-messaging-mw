@@ -40,7 +40,7 @@ public class ChatService : IChatService
         _cache.SetString(key, JsonSerializer.Serialize(sessions), options);
     }
 
-    public bool UserDisconnected(string nickname, string deviceId)
+    public bool UserDisconnected(string nickname, string deviceId, string connectionId)
     {
         try
         {
@@ -50,6 +50,8 @@ public class ChatService : IChatService
             
             var sessions = JsonSerializer.Deserialize<Dictionary<string, DeviceSession>>(data);
             if (sessions == null || !sessions.ContainsKey(deviceId)) return false;
+
+            if (sessions[deviceId].ConnectionId != connectionId) return false;
 
             sessions.Remove(deviceId);
 
@@ -88,7 +90,7 @@ public class ChatService : IChatService
         }
     }
 
-    public async Task<ChatMessage> SendPrivateMessageAsync(string senderNickname, string to, string senderSymKey, Dictionary<string, string> ephemeralSymKeys, string signature, string payload, string? replyToMessageId)
+    public async Task<ChatMessage> SendPrivateMessageAsync(string senderNickname, string to, string senderEncryptedKey, Dictionary<string, string> receiverEncryptedKeys, string commonEncryptedPayload, string signature, string? replyToMessageId)
     {
         var senderUser = await _users.Find(u => u.Nickname == senderNickname).FirstOrDefaultAsync();
         var receiverUser = await _users.Find(u => u.Nickname == to).FirstOrDefaultAsync();
@@ -99,32 +101,23 @@ public class ChatService : IChatService
         if (senderUser.BlockedUsers != null && senderUser.BlockedUsers.Any(b => b.Nickname == to))
             throw new InvalidOperationException($"You have blocked {to}. Unblock them to send messages.");
 
-        var blockInfo = receiverUser.BlockedUsers?.FirstOrDefault(b => b.Nickname == senderNickname);
-        if (blockInfo != null)
-        {
-            var localTime = blockInfo.BlockedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
-            throw new InvalidOperationException($"Bu kullanıcı sizi {localTime} tarihinde engelledi, ona mesaj gönderemezsiniz.");
-        }
+        if (receiverUser.BlockedUsers != null && receiverUser.BlockedUsers.Any(b => b.Nickname == senderNickname))
+            throw new InvalidOperationException($"{to} has blocked you.");
 
-        // The ephemeralSymKeys should also contain the static key mapped under "STATIC" key from frontend.
-        var receiverStaticSymKey = ephemeralSymKeys.GetValueOrDefault("STATIC") ?? string.Empty;
-        if (ephemeralSymKeys.ContainsKey("STATIC")) ephemeralSymKeys.Remove("STATIC");
-
-        var chatMsg = new ChatMessage
+        var message = new ChatMessage
         {
             SenderNickname = senderNickname,
             ReceiverNickname = to,
-            ReplyToMessageId = replyToMessageId,
-            SenderEncryptedSymKey = senderSymKey,
-            ReceiverEncryptedSymKey = receiverStaticSymKey,
-            ReceiverEphemeralSymKeys = ephemeralSymKeys,
+            SenderEncryptedPayload = senderEncryptedKey,
+            ReceiverEncryptedPayloads = receiverEncryptedKeys,
+            CommonEncryptedPayload = commonEncryptedPayload,
             DigitalSignature = signature,
-            EncryptedPayload = payload,
+            ReplyToMessageId = replyToMessageId,
             Timestamp = DateTime.UtcNow
         };
 
-        await _messages.InsertOneAsync(chatMsg);
-        return chatMsg;
+        await _messages.InsertOneAsync(message);
+        return message;
     }
 
     public async Task<(string FinalEmoji, string SenderNickname, string ReceiverNickname)> AddReactionAsync(string myNickname, string messageId, string emoji)
@@ -178,9 +171,8 @@ public class ChatService : IChatService
 
         var update = Builders<ChatMessage>.Update
             .Set(m => m.IsDeleted, true)
-            .Set(m => m.EncryptedPayload, "")
-            .Set(m => m.SenderEncryptedSymKey, "")
-            .Set(m => m.ReceiverEncryptedSymKey, "")
+            .Set(m => m.SenderEncryptedPayload, "")
+            .Set(m => m.ReceiverEncryptedPayloads, new Dictionary<string, string>())
             .Set(m => m.Reactions, new Dictionary<string, string>());
 
         await _messages.UpdateOneAsync(m => m.Id == messageId, update);
@@ -209,6 +201,7 @@ public class ChatService : IChatService
             .Set(u => u.IsOnline, isOnline)
             .Set(u => u.LastSeen, DateTime.UtcNow);
         await _users.UpdateOneAsync(u => u.Nickname == nickname, update);
+        _cache.Remove($"profile_{nickname}");
     }
     public async Task<IEnumerable<ChatMessage>> SyncMissedMessagesAsync(string myNickname, string lastMessageId)
     {

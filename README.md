@@ -15,11 +15,7 @@ This project is designed to be the backend engine for high-security messaging ap
 
 Additionally, it supports WebRTC signaling for peer-to-peer Voice/Video calls, meaning audio and video streams never touch the server!
 
-### 📸 Client Preview
 
-![Client Preview](./docs/client-preview.png)
-
----
 
 ### 📐 Architecture
 
@@ -141,7 +137,7 @@ dotnet restore
 dotnet run
 ```
 
-**3. Run Unit Tests (27/27 Passing):**
+**3. Run Unit Tests (38/38 Passing):**
 ```bash
 cd PRIVATE.MESSAGING.MW
 dotnet test
@@ -161,11 +157,7 @@ Bu proje; yüksek güvenlikli mesajlaşma uygulamalarının (WhatsApp, Signal, T
 
 Ayrıca SignalR üzerinden WebRTC SDP takasını yöneterek, kullanıcıların sunucuya ses/görüntü aktarmadan birbirleriyle doğrudan Peer-to-Peer sesli görüşme yapabilmelerine olanak tanır!
 
-### 📸 İstemci Önizleme
 
-![İstemci Önizleme](./docs/client-preview.png)
-
----
 
 ### 📐 Mimari
 
@@ -293,4 +285,4 @@ dotnet run
 cd PRIVATE.MESSAGING.MW
 dotnet test
 ```
-Tüm testlerin başarıyla (`Passed: 27`) tamamlandığını göreceksiniz.
+Tüm testlerin başarıyla (`Passed: 38`) tamamlandığını göreceksiniz.

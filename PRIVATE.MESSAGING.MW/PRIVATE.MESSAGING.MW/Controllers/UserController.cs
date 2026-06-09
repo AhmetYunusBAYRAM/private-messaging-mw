@@ -95,4 +95,15 @@ public class UserController : ControllerBase
         var blockedUsers = await _userService.GetBlockedUsersAsync(myNickname);
         return Ok(blockedUsers);
     }
+
+    [Authorize]
+    [HttpGet("sessions")]
+    public async Task<IActionResult> GetSessions()
+    {
+        var nickname = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(nickname)) return Unauthorized();
+
+        var logs = await _userService.GetDeviceLogsAsync(nickname);
+        return Ok(logs);
+    }
 }

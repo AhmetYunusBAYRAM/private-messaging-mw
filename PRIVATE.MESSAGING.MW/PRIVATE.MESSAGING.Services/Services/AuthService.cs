@@ -4,6 +4,8 @@ using MongoDB.Driver;
 using PRIVATE.MESSAGING.Core.Entities;
 using PRIVATE.MESSAGING.Core.Entities.Attributes;
 using PRIVATE.MESSAGING.Core.Interfaces;
+using PRIVATE.MESSAGING.DTOs.Requests;
+using PRIVATE.MESSAGING.DTOs.Responses;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -23,7 +25,7 @@ public class AuthService : IAuthService
         _config = config;
     }
 
-    public async Task<(bool Success, string Message)> RegisterAsync(string email, string nickname, string publicKey, string encryptedPrivateKey)
+    public async Task<(bool Success, string Message)> RegisterAsync(string email, string nickname, KeyBundleDto keys)
     {
         var existingUser = await _users.Find(u => u.Email == email || u.Nickname == nickname).FirstOrDefaultAsync();
         if (existingUser != null)
@@ -36,8 +38,12 @@ public class AuthService : IAuthService
         {
             Email = email,
             Nickname = nickname,
-            PublicKey = publicKey,
-            EncryptedPrivateKey = encryptedPrivateKey,
+            IdentityPublicKey = keys.IdentityPublicKey,
+            EncryptedIdentityPrivateKey = keys.EncryptedIdentityPrivateKey,
+            SignedPreKeyPublic = keys.SignedPreKeyPublic,
+            EncryptedSignedPrePrivateKey = keys.EncryptedSignedPrePrivateKey,
+            SignedPreKeySignature = keys.SignedPreKeySignature,
+            OneTimePreKeys = keys.OneTimePreKeys.Select(k => new PreKeyInfo { KeyId = k.KeyId, PublicKey = k.PublicKey }).ToList(),
             Otp = otp,
             OtpExpiry = DateTime.UtcNow.AddMinutes(5),
             LastSeen = DateTime.UtcNow
@@ -85,14 +91,14 @@ public class AuthService : IAuthService
         return (true, "OTP generated. Check email (or console).");
     }
 
-    public async Task<(bool Success, string Message, string Token, string RefreshToken, string Nickname, string EncryptedPrivateKey)> VerifyOtpAsync(string email, string otp)
+    public async Task<(bool Success, string Message, VerifyOtpResponseDto? Data)> VerifyOtpAsync(string email, string otp, string ipAddress, string deviceName, string deviceId)
     {
         var user = await _users.Find(u => u.Email == email).FirstOrDefaultAsync();
         if (user == null)
-            return (false, "User not found", string.Empty, string.Empty, string.Empty, string.Empty);
+            return (false, "User not found", null);
 
         if (user.Otp != otp || user.OtpExpiry < DateTime.UtcNow)
-            return (false, "Invalid or expired OTP", string.Empty, string.Empty, string.Empty, string.Empty);
+            return (false, "Invalid or expired OTP", null);
 
         var refreshToken = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
         var refreshTokenExpiry = DateTime.UtcNow.AddDays(30);
@@ -103,9 +109,18 @@ public class AuthService : IAuthService
             Expiry = refreshTokenExpiry
         };
 
+        var newDeviceLog = new DeviceLog
+        {
+            DeviceId = string.IsNullOrEmpty(deviceId) ? "Bilinmiyor" : deviceId,
+            IpAddress = string.IsNullOrEmpty(ipAddress) ? "Bilinmiyor" : ipAddress,
+            DeviceName = string.IsNullOrEmpty(deviceName) ? "Bilinmeyen Cihaz" : deviceName,
+            LastActiveAt = DateTime.UtcNow
+        };
+
         var update = Builders<User>.Update
             .Set(u => u.Otp, null)
             .Set(u => u.OtpExpiry, null)
+            .Push(u => u.DeviceLogs, newDeviceLog)
             .Push(u => u.RefreshTokens, newRefreshTokenInfo);
 
         await _users.UpdateOneAsync(u => u.Id == user.Id, update);
@@ -127,14 +142,27 @@ public class AuthService : IAuthService
         var token = tokenHandler.CreateToken(tokenDescriptor);
         var tokenString = tokenHandler.WriteToken(token);
 
-        return (true, "OTP verified", tokenString, refreshToken, user.Nickname, user.EncryptedPrivateKey);
+        var responseData = new VerifyOtpResponseDto
+        {
+            Token = tokenString,
+            RefreshToken = refreshToken,
+            Nickname = user.Nickname,
+            EncryptedIdentityPrivateKey = user.EncryptedIdentityPrivateKey,
+            EncryptedSignedPrePrivateKey = user.EncryptedSignedPrePrivateKey
+        };
+
+        return (true, "OTP verified", responseData);
     }
 
-    public async Task<(bool Success, string Message)> ResetKeysAsync(string email, string newPublicKey, string newEncryptedPrivateKey)
+    public async Task<(bool Success, string Message)> ResetKeysAsync(string email, KeyBundleDto keys)
     {
         var update = Builders<User>.Update
-            .Set(u => u.PublicKey, newPublicKey)
-            .Set(u => u.EncryptedPrivateKey, newEncryptedPrivateKey);
+            .Set(u => u.IdentityPublicKey, keys.IdentityPublicKey)
+            .Set(u => u.EncryptedIdentityPrivateKey, keys.EncryptedIdentityPrivateKey)
+            .Set(u => u.SignedPreKeyPublic, keys.SignedPreKeyPublic)
+            .Set(u => u.EncryptedSignedPrePrivateKey, keys.EncryptedSignedPrePrivateKey)
+            .Set(u => u.SignedPreKeySignature, keys.SignedPreKeySignature)
+            .Set(u => u.OneTimePreKeys, keys.OneTimePreKeys.Select(k => new PreKeyInfo { KeyId = k.KeyId, PublicKey = k.PublicKey }).ToList());
 
         var result = await _users.UpdateOneAsync(u => u.Email == email, update);
         
@@ -237,9 +265,34 @@ public class AuthService : IAuthService
         }
     }
 
-    public async Task<string?> GetPublicKeyAsync(string nickname)
+    public async Task<KeyBundleDto?> GetPublicKeyBundleAsync(string nickname)
     {
         var user = await _users.Find(u => u.Nickname == nickname).FirstOrDefaultAsync();
-        return user?.PublicKey;
+        if (user == null) return null;
+
+        PreKeyDto? oneTimePreKey = null;
+        if (user.OneTimePreKeys != null && user.OneTimePreKeys.Count > 0)
+        {
+            var preKeyInfo = user.OneTimePreKeys.First();
+            oneTimePreKey = new PreKeyDto { KeyId = preKeyInfo.KeyId, PublicKey = preKeyInfo.PublicKey };
+
+            // Remove it from DB (One-Time use)
+            var update = Builders<User>.Update.PullFilter(u => u.OneTimePreKeys, k => k.KeyId == preKeyInfo.KeyId);
+            await _users.UpdateOneAsync(u => u.Id == user.Id, update);
+        }
+
+        var bundle = new KeyBundleDto
+        {
+            IdentityPublicKey = user.IdentityPublicKey,
+            SignedPreKeyPublic = user.SignedPreKeyPublic,
+            SignedPreKeySignature = user.SignedPreKeySignature
+        };
+
+        if (oneTimePreKey != null)
+        {
+            bundle.OneTimePreKeys.Add(oneTimePreKey);
+        }
+
+        return bundle;
     }
 }

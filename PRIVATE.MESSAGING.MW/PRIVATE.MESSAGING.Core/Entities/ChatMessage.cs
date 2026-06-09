@@ -14,12 +14,10 @@ public class ChatMessage
     
     public string? ReplyToMessageId { get; set; }
     
-    public string SenderEncryptedSymKey { get; set; } = string.Empty;
-    public string ReceiverEncryptedSymKey { get; set; } = string.Empty;
-    public Dictionary<string, string> ReceiverEphemeralSymKeys { get; set; } = new();
+    public string SenderEncryptedPayload { get; set; } = string.Empty;
+    public Dictionary<string, string> ReceiverEncryptedPayloads { get; set; } = new();
+    public string CommonEncryptedPayload { get; set; } = string.Empty;
     public string DigitalSignature { get; set; } = string.Empty;
-    
-    public string EncryptedPayload { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     
     public bool IsDeleted { get; set; } = false;

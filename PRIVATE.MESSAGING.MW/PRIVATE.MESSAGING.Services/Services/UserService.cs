@@ -10,28 +10,25 @@ namespace PRIVATE.MESSAGING.Services;
 
 public class UserService : IUserService
 {
-    private readonly IMongoCollection<User> _users;
-    private readonly IMongoCollection<ChatMessage> _messages;
+    private readonly IUserRepository _userRepository;
     private readonly IDistributedCache _cache;
 
-    public UserService(IMongoDatabase database, IDistributedCache cache)
+    public UserService(IUserRepository userRepository, IDistributedCache cache)
     {
-        _users = database.GetCollection<User>("Users");
-        _messages = database.GetCollection<ChatMessage>("ChatMessages");
+        _userRepository = userRepository;
         _cache = cache;
     }
 
     public async Task<bool> UpdateProfilePictureAsync(string nickname, string base64Image)
     {
-        var update = Builders<User>.Update.Set(u => u.ProfilePictureBase64, base64Image);
-        var result = await _users.UpdateOneAsync(u => u.Nickname == nickname, update);
+        var result = await _userRepository.UpdateProfilePictureAsync(nickname, base64Image);
         
-        if (result.MatchedCount > 0)
+        if (result)
         {
             await _cache.RemoveAsync($"profile_{nickname}");
         }
         
-        return result.MatchedCount > 0;
+        return result;
     }
 
     public async Task<object?> GetProfileAsync(string targetNickname, string? callerNickname)
@@ -47,7 +44,7 @@ public class UserService : IUserService
 
         if (targetUser == null)
         {
-            targetUser = await _users.Find(u => u.Nickname == targetNickname).FirstOrDefaultAsync();
+            targetUser = await _userRepository.GetByNicknameAsync(targetNickname);
             if (targetUser == null) return null;
 
             var cacheOptions = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30) };
@@ -58,45 +55,29 @@ public class UserService : IUserService
         {
             return new { 
                 nickname = targetUser.Nickname, 
-                publicKey = targetUser.PublicKey, 
+                identityPublicKey = targetUser.IdentityPublicKey, 
                 profilePictureBase64 = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=",
                 lastSeen = (DateTime?)null,
-                isOnline = false
+                isOnline = false,
+                hasBlockedYou = true
             };
         }
 
         return new { 
             nickname = targetUser.Nickname, 
-            publicKey = targetUser.PublicKey, 
+            identityPublicKey = targetUser.IdentityPublicKey, 
             profilePictureBase64 = targetUser.ProfilePictureBase64,
             lastSeen = targetUser.LastSeen,
-            isOnline = targetUser.IsOnline
+            isOnline = targetUser.IsOnline,
+            hasBlockedYou = false
         };
     }
 
     public async Task<PagedResponse<object>> GetContactsAsync(string myNickname, string? query, string? cursor, int limit)
     {
-        var filterBuilder = Builders<User>.Filter;
-        var filter = filterBuilder.Ne(u => u.Nickname, myNickname);
-
-        if (!string.IsNullOrWhiteSpace(query))
-        {
-            var searchFilter = filterBuilder.Regex(u => u.Nickname, new MongoDB.Bson.BsonRegularExpression(query, "i"));
-            filter = filterBuilder.And(filter, searchFilter);
-        }
-
-        if (!string.IsNullOrEmpty(cursor))
-        {
-            var cursorFilter = filterBuilder.Gt(u => u.Nickname, cursor);
-            filter = filterBuilder.And(filter, cursorFilter);
-        }
-
-        var totalCount = await _users.CountDocumentsAsync(filter);
-
-        var users = await _users.Find(filter)
-            .SortBy(u => u.Nickname)
-            .Limit(limit)
-            .ToListAsync();
+        var searchResult = await _userRepository.SearchContactsAsync(myNickname, query ?? "", cursor, limit);
+        var users = searchResult.Users;
+        var nextCursor = searchResult.NextCursor;
         
         var items = users.Select(u => new 
         {
@@ -105,33 +86,17 @@ public class UserService : IUserService
             lastSeen = u.BlockedUsers != null && u.BlockedUsers.Any(b => b.Nickname == myNickname) ? (DateTime?)null : u.LastSeen
         }).Cast<object>().ToList();
 
-        string? nextCursor = null;
-        if (users.Count == limit)
-        {
-            nextCursor = users.Last().Nickname;
-        }
-
         return new PagedResponse<object>
         {
             Items = items,
-            TotalCount = (int)totalCount,
+            TotalCount = (int)searchResult.TotalCount,
             NextCursor = nextCursor
         };
     }
 
     public async Task<IEnumerable<object>> GetInboxAsync(string nickname)
     {
-        var filter = Builders<ChatMessage>.Filter.And(
-            Builders<ChatMessage>.Filter.Or(
-                Builders<ChatMessage>.Filter.Eq(x => x.SenderNickname, nickname),
-                Builders<ChatMessage>.Filter.Eq(x => x.ReceiverNickname, nickname)
-            ),
-            Builders<ChatMessage>.Filter.Not(
-                Builders<ChatMessage>.Filter.AnyEq(x => x.DeletedFor, nickname)
-            )
-        );
-        
-        var allMessages = await _messages.Find(filter).SortByDescending(x => x.Timestamp).ToListAsync();
+        var allMessages = await _userRepository.GetInboxMessagesAsync(nickname);
         
         var inbox = allMessages
             .GroupBy(m => m.SenderNickname == nickname ? m.ReceiverNickname : m.SenderNickname)
@@ -143,19 +108,23 @@ public class UserService : IUserService
             }).ToList();
 
         var contacts = inbox.Select(i => i.ContactNickname).ToList();
-        var profiles = await _users.Find(u => contacts.Contains(u.Nickname)).ToListAsync();
+        var profiles = await _userRepository.GetUsersByNicknamesAsync(contacts);
+
+        var myUser = await _userRepository.GetByNicknameAsync(nickname);
 
         var result = new List<object>();
         foreach(var item in inbox)
         {
             var p = profiles.FirstOrDefault(x => x.Nickname == item.ContactNickname);
             var isBlockedByThem = p != null && p.BlockedUsers != null && p.BlockedUsers.Any(b => b.Nickname == nickname);
+            var isBlockedByMe = myUser != null && myUser.BlockedUsers != null && myUser.BlockedUsers.Any(b => b.Nickname == item.ContactNickname);
+            var hidePic = isBlockedByThem || isBlockedByMe;
 
             result.Add(new {
                 contactNickname = item.ContactNickname,
                 lastMessage = item.LastMessage,
                 unreadCount = item.UnreadCount,
-                profilePictureBase64 = isBlockedByThem ? "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" : p?.ProfilePictureBase64
+                profilePictureBase64 = hidePic ? "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" : p?.ProfilePictureBase64
             });
         }
 
@@ -164,23 +133,43 @@ public class UserService : IUserService
 
     public async Task<bool> BlockUserAsync(string myNickname, string targetNickname)
     {
-        var update = Builders<User>.Update.AddToSet(u => u.BlockedUsers, new BlockedUserInfo { Nickname = targetNickname, BlockedAt = DateTime.UtcNow });
-        var result = await _users.UpdateOneAsync(u => u.Nickname == myNickname, update);
-        return result.ModifiedCount > 0;
+        if (myNickname == targetNickname) return false;
+
+        var myUser = await _userRepository.GetByNicknameAsync(myNickname);
+        var targetUser = await _userRepository.GetByNicknameAsync(targetNickname);
+        if (myUser == null || targetUser == null) return false;
+
+        if (myUser.BlockedUsers != null && myUser.BlockedUsers.Any(b => b.Nickname == targetNickname)) return true;
+
+        var blocked = new BlockedUserInfo { Nickname = targetNickname, BlockedAt = DateTime.UtcNow };
+        await _userRepository.AddBlockedUserAsync(myNickname, blocked);
+        await _cache.RemoveAsync($"profile_{myNickname}");
+        return true;
     }
 
     public async Task<bool> UnblockUserAsync(string myNickname, string targetNickname)
     {
-        var update = Builders<User>.Update.PullFilter(u => u.BlockedUsers, b => b.Nickname == targetNickname);
-        var result = await _users.UpdateOneAsync(u => u.Nickname == myNickname, update);
-        return result.ModifiedCount > 0;
+        await _userRepository.RemoveBlockedUserAsync(myNickname, targetNickname);
+        await _cache.RemoveAsync($"profile_{myNickname}");
+        return true;
     }
 
     public async Task<IEnumerable<string>> GetBlockedUsersAsync(string myNickname)
     {
-        var me = await _users.Find(u => u.Nickname == myNickname).FirstOrDefaultAsync();
-        if (me == null || me.BlockedUsers == null) return new List<string>();
+        var user = await _userRepository.GetByNicknameAsync(myNickname);
+        return user?.BlockedUsers?.Select(b => b.Nickname) ?? Array.Empty<string>();
+    }
 
-        return me.BlockedUsers.Select(b => b.Nickname);
+    public async Task<IEnumerable<object>> GetDeviceLogsAsync(string nickname)
+    {
+        var user = await _userRepository.GetByNicknameAsync(nickname);
+        if (user == null || user.DeviceLogs == null) return new List<object>();
+
+        return user.DeviceLogs.OrderByDescending(d => d.LastActiveAt).Select(d => new
+        {
+            deviceId = d.DeviceName,
+            ipAddress = d.IpAddress,
+            lastActive = d.LastActiveAt
+        });
     }
 }
