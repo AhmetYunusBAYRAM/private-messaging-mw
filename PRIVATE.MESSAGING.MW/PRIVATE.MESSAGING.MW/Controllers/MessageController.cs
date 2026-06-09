@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PRIVATE.MESSAGING.MW.Models;
+using System.Security.Claims;
 
 namespace PRIVATE.MESSAGING.MW.Controllers;
 
@@ -15,13 +17,23 @@ public class MessageController : ControllerBase
         _messages = database.GetCollection<ChatMessage>("ChatMessages");
     }
 
-    [HttpGet("history/{nickname}")]
-    public async Task<IActionResult> GetHistory(string nickname)
+    [Authorize]
+    [HttpGet("history/{contactNickname}")]
+    public async Task<IActionResult> GetHistory(string contactNickname)
     {
-        // Get all messages where the user is sender or receiver
+        var myNickname = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(myNickname)) return Unauthorized();
+
+        // Get all messages where the logged-in user is chatting with the specified contact
         var filter = Builders<ChatMessage>.Filter.Or(
-            Builders<ChatMessage>.Filter.Eq(x => x.SenderNickname, nickname),
-            Builders<ChatMessage>.Filter.Eq(x => x.ReceiverNickname, nickname)
+            Builders<ChatMessage>.Filter.And(
+                Builders<ChatMessage>.Filter.Eq(x => x.SenderNickname, myNickname),
+                Builders<ChatMessage>.Filter.Eq(x => x.ReceiverNickname, contactNickname)
+            ),
+            Builders<ChatMessage>.Filter.And(
+                Builders<ChatMessage>.Filter.Eq(x => x.SenderNickname, contactNickname),
+                Builders<ChatMessage>.Filter.Eq(x => x.ReceiverNickname, myNickname)
+            )
         );
         
         var messages = await _messages.Find(filter).SortBy(x => x.Timestamp).ToListAsync();
