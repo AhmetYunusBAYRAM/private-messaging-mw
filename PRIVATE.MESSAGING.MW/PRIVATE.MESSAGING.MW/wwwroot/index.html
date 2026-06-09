@@ -14,12 +14,7 @@
         input, button, select { padding: 8px; margin: 5px 0; border-radius: 4px; border: 1px solid #444; background: #333; color: white; width: calc(100% - 18px); box-sizing: border-box; }
         button { background: #007bff; cursor: pointer; font-weight: bold; width: 100%; margin-top:5px; }
         button:hover { background: #0056b3; }
-        .logs { height: 250px; overflow-y: scroll; border: 1px solid #444; padding: 10px; background: #000; font-family: monospace; font-size: 13px; margin-top: 5px; margin-bottom: 5px;}
-        .msg-in { color: #00ff00; }
-        .msg-out { color: #ff9900; }
-        .msg-hist { color: #00ccff; }
-        .sys { color: #888; }
-        .enc { color: #ff0055; font-size: 11px; }
+        .logs { height: 350px; overflow-y: scroll; border: 1px solid #444; padding: 10px; background: #0b141a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; margin-top: 5px; margin-bottom: 5px; display: flex; flex-direction: column; gap: 8px; }
         h2, h3, h4 { border-bottom: 1px solid #444; padding-bottom: 5px; margin-top: 0; margin-bottom:10px; }
         .row { display: flex; gap: 10px; }
         .row input, .row select { flex: 1; }
@@ -36,6 +31,27 @@
         .block-btn { background: #dc3545; margin: 0; }
         .block-btn:hover { background: #c82333; }
         .blocked-user { color: #ff6b6b; font-size: 13px; padding: 5px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center;}
+        
+        /* Message Bubbles */
+        .msg-container { display: flex; flex-direction: column; max-width: 75%; position: relative; margin-bottom: 12px; }
+        .msg-out { align-self: flex-end; }
+        .msg-in { align-self: flex-start; }
+        .msg-bubble { padding: 8px 12px; border-radius: 8px; position: relative; word-wrap: break-word; -webkit-touch-callout: none; user-select: none; }
+        .msg-out .msg-bubble { background: #005c4b; color: white; border-bottom-right-radius: 0; }
+        .msg-in .msg-bubble { background: #202c33; color: white; border-bottom-left-radius: 0; }
+        .msg-time { font-size: 10px; color: #8696a0; text-align: right; margin-top: 4px; display: block; }
+        
+        /* Reactions */
+        .reaction-badge { position: absolute; bottom: -14px; background: #1e2a30; border: 1px solid #2a3942; border-radius: 12px; padding: 2px 6px; font-size: 12px; display: flex; gap: 2px; cursor: pointer; z-index: 2; }
+        .msg-out .reaction-badge { right: 5px; }
+        .msg-in .reaction-badge { left: 5px; }
+        
+        .reaction-menu { position: absolute; bottom: 100%; right: 0; background: #233138; border-radius: 20px; padding: 5px 10px; display: none; gap: 8px; z-index: 10; box-shadow: 0 2px 10px rgba(0,0,0,0.5); margin-bottom: 5px; }
+        .reaction-menu span { cursor: pointer; font-size: 18px; transition: transform 0.1s; }
+        .reaction-menu span:hover { transform: scale(1.3); }
+        
+        .sys-log { align-self: center; background: #182229; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; }
+        .err-log { align-self: center; background: #4a1920; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; }
     </style>
 </head>
 <body>
@@ -53,10 +69,103 @@
             checkAutoLogin(2);
         };
 
-        function log(cId, msg, type = 'sys') {
+        function addSysLog(cId, msg, isError = false) {
             const logs = document.getElementById(`log${cId}`);
-            logs.innerHTML += `<div class="${type}">[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+            logs.innerHTML += `<div class="${isError ? 'err-log' : 'sys-log'}">${msg}</div>`;
             logs.scrollTop = logs.scrollHeight;
+        }
+
+        let pressTimer;
+        function startPress(e, cId, msgId) {
+            cancelPress();
+            pressTimer = setTimeout(() => {
+                showReactionMenu(cId, msgId);
+            }, 400); // 400ms basılı tutma
+        }
+
+        function cancelPress() {
+            if (pressTimer) clearTimeout(pressTimer);
+        }
+
+        function showReactionMenu(cId, msgId) {
+            // Hepsini gizle
+            document.querySelectorAll('.reaction-menu').forEach(m => m.style.display = 'none');
+            const menu = document.getElementById(`rxMenu_${cId}_${msgId}`);
+            if (menu) menu.style.display = 'flex';
+        }
+
+        document.addEventListener('mousedown', (e) => {
+            if (!e.target.closest('.msg-bubble') && !e.target.closest('.reaction-menu')) {
+                document.querySelectorAll('.reaction-menu').forEach(m => m.style.display = 'none');
+            }
+        });
+        document.addEventListener('touchstart', (e) => {
+            if (!e.target.closest('.msg-bubble') && !e.target.closest('.reaction-menu')) {
+                document.querySelectorAll('.reaction-menu').forEach(m => m.style.display = 'none');
+            }
+        });
+
+        function renderMessage(cId, msgId, sender, text, timestamp, reactions = {}) {
+            const logs = document.getElementById(`log${cId}`);
+            const c = clients[cId];
+            const isMe = sender === c.nickname;
+            const timeStr = new Date(timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            
+            // Generate reactions HTML
+            let rxHtml = '';
+            const emojiCounts = {};
+            let totalRx = 0;
+            for (const [nick, emoji] of Object.entries(reactions)) {
+                emojiCounts[emoji] = (emojiCounts[emoji] || 0) + 1;
+                totalRx++;
+            }
+            if (totalRx > 0) {
+                let displayEmojis = Object.keys(emojiCounts).join(' ');
+                rxHtml = `<div class="reaction-badge" title="Tepkiler">${displayEmojis} ${totalRx > 1 ? totalRx : ''}</div>`;
+            }
+
+            const html = `
+                <div class="msg-container ${isMe ? 'msg-out' : 'msg-in'}" id="msgBox_${cId}_${msgId}">
+                    <div class="msg-bubble" 
+                         onmousedown="startPress(event, '${cId}', '${msgId}')" 
+                         onmouseup="cancelPress()" 
+                         onmouseleave="cancelPress()" 
+                         ontouchstart="startPress(event, '${cId}', '${msgId}')" 
+                         ontouchend="cancelPress()" 
+                         ontouchcancel="cancelPress()">
+                        <div>${text}</div>
+                        <span class="msg-time">${timeStr}</span>
+                        ${rxHtml}
+                        <div class="reaction-menu" id="rxMenu_${cId}_${msgId}">
+                            <span onclick="event.stopPropagation(); sendReaction(${cId}, '${msgId}', '👍')">👍</span>
+                            <span onclick="event.stopPropagation(); sendReaction(${cId}, '${msgId}', '❤️')">❤️</span>
+                            <span onclick="event.stopPropagation(); sendReaction(${cId}, '${msgId}', '😂')">😂</span>
+                            <span onclick="event.stopPropagation(); sendReaction(${cId}, '${msgId}', '😮')">😮</span>
+                            <span onclick="event.stopPropagation(); sendReaction(${cId}, '${msgId}', '😢')">😢</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            logs.innerHTML += html;
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        async function sendReaction(cId, msgId, emoji) {
+            document.querySelectorAll('.reaction-menu').forEach(m => m.style.display = 'none');
+            const c = clients[cId];
+            if (!c.connection) return;
+            
+            const to = document.getElementById(`to${cId}`).value;
+            if (c.blocked.includes(to)) {
+                return alert("Bu kullanıcıyı engellediğiniz için ifade bırakamazsınız.");
+            }
+            
+            try {
+                await c.connection.invoke("AddReaction", msgId, emoji);
+            } catch (err) {
+                alert(err.message);
+                addSysLog(cId, `❌ İfade Hatası: ${err.message}`, true);
+            }
         }
 
         async function checkAutoLogin(cId) {
@@ -163,20 +272,28 @@
                 .withAutomaticReconnect()
                 .build();
 
-            c.connection.on("ReceiveMessage", async (from, receiverSymKey, encryptedPayload) => {
+            c.connection.on("ReceiveMessage", async (msgId, from, receiverSymKey, encryptedPayload) => {
                 const aesKey = c.rsa.decrypt(receiverSymKey);
                 if (!aesKey) return;
                 const decryptedBytes = CryptoJS.AES.decrypt(encryptedPayload, aesKey);
                 const originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
                 
                 if (document.getElementById(`to${cId}`).value === from) {
-                    log(cId, `[${from}]: ${originalText}`, 'msg-in');
+                    renderMessage(cId, msgId, from, originalText, new Date().toISOString(), {});
                 }
                 await loadInbox(cId);
             });
 
+            c.connection.on("ReceiveReaction", (msgId, reactorNick, emoji) => {
+                // Sadece sohbet penceresi açıksa yenile
+                const box = document.getElementById(`msgBox_${cId}_${msgId}`);
+                if (box) {
+                    loadHistory(cId); // Olayı temiz parse etmek için
+                }
+            });
+
             await c.connection.start();
-            log(cId, `✅ Bağlantı sağlandı`);
+            addSysLog(cId, `✅ E2EE Soket Bağlantısı Sağlandı`);
         }
 
         async function fetchProfile(cId) {
@@ -308,13 +425,9 @@
                     const decryptedBytes = CryptoJS.AES.decrypt(msg.encryptedPayload, aesKey);
                     const originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
                     
-                    if (msg.senderNickname === c.nickname) {
-                        log(cId, `[Sen -> ${msg.receiverNickname}]: ${originalText}`, 'msg-out');
-                    } else {
-                        log(cId, `[${msg.senderNickname}]: ${originalText}`, 'msg-hist');
-                    }
+                    renderMessage(cId, msg.id, msg.senderNickname, originalText, msg.timestamp, msg.reactions || {});
                 } else {
-                    log(cId, `[ŞİFRELİ GEÇMİŞ] Mesaj çözülemedi`, 'enc');
+                    addSysLog(cId, `[ŞİFRELİ GEÇMİŞ] Mesaj çözülemedi`, true);
                 }
             });
         }
@@ -347,13 +460,12 @@
             const senderSymKey = encryptorSelf.encrypt(aesKey);
 
             try {
-                await c.connection.invoke("SendPrivateMessage", to, senderSymKey, receiverSymKey, encryptedPayload);
-                log(cId, `[Sen -> ${to}]: ${msg}`, 'msg-out');
+                const msgId = await c.connection.invoke("SendPrivateMessage", to, senderSymKey, receiverSymKey, encryptedPayload);
+                renderMessage(cId, msgId, c.nickname, msg, new Date().toISOString(), {});
                 document.getElementById(`msg${cId}`).value = "";
                 await loadInbox(cId);
             } catch (err) {
-                // SignalR exceptions stringify nicely but might have prefix, let's just alert the message.
-                log(cId, `❌ HATA: ${err.message}`, 'enc');
+                addSysLog(cId, `❌ HATA: ${err.message}`, true);
                 alert(err.message);
             }
         }

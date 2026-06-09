@@ -17,4 +17,7 @@ public class ChatMessage
     
     public string EncryptedPayload { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; }
+    
+    // Key: Nickname, Value: Emoji (e.g., "❤️", "👍")
+    public Dictionary<string, string> Reactions { get; set; } = new();
 }

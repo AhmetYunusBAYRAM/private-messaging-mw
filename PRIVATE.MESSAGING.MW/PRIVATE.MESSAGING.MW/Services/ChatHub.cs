@@ -29,10 +29,10 @@ public class ChatHub : Hub
         return base.OnConnectedAsync();
     }
 
-    public async Task SendPrivateMessage(string to, string senderSymKey, string receiverSymKey, string payload)
+    public async Task<string> SendPrivateMessage(string to, string senderSymKey, string receiverSymKey, string payload)
     {
         var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (string.IsNullOrEmpty(myNickname)) return;
+        if (string.IsNullOrEmpty(myNickname)) return null;
 
         // Check if either user blocked the other
         var db = _messages.Database; // We need to access Users collection
@@ -41,7 +41,7 @@ public class ChatHub : Hub
         var senderUser = await usersCol.Find(u => u.Nickname == myNickname).FirstOrDefaultAsync();
         var receiverUser = await usersCol.Find(u => u.Nickname == to).FirstOrDefaultAsync();
 
-        if (senderUser == null || receiverUser == null) return;
+        if (senderUser == null || receiverUser == null) return null;
 
         if (senderUser.BlockedUsers.Any(b => b.Nickname == to))
         {
@@ -71,7 +71,70 @@ public class ChatHub : Hub
 
         if (_users.TryGetValue(to, out var targetId))
         {
-            await Clients.Client(targetId).SendAsync("ReceiveMessage", myNickname, receiverSymKey, payload);
+            await Clients.Client(targetId).SendAsync("ReceiveMessage", chatMsg.Id, myNickname, receiverSymKey, payload);
+        }
+
+        return chatMsg.Id;
+    }
+
+    public async Task AddReaction(string messageId, string emoji)
+    {
+        var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(myNickname)) return;
+
+        var msg = await _messages.Find(m => m.Id == messageId).FirstOrDefaultAsync();
+        if (msg == null) return;
+
+        var targetNickname = msg.SenderNickname == myNickname ? msg.ReceiverNickname : msg.SenderNickname;
+
+        var db = _messages.Database;
+        var usersCol = db.GetCollection<User>("Users");
+        
+        var myUser = await usersCol.Find(u => u.Nickname == myNickname).FirstOrDefaultAsync();
+        if (myUser != null && myUser.BlockedUsers.Any(b => b.Nickname == targetNickname))
+        {
+            throw new HubException("Bu kullanıcıyı engellediğiniz için ifade bırakamazsınız.");
+        }
+
+        var targetUser = await usersCol.Find(u => u.Nickname == targetNickname).FirstOrDefaultAsync();
+        if (targetUser != null)
+        {
+            var blockInfo = targetUser.BlockedUsers.FirstOrDefault(b => b.Nickname == myNickname);
+            if (blockInfo != null)
+            {
+                var localTime = blockInfo.BlockedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
+                throw new HubException($"Bu kullanıcı sizi {localTime} tarihinde engelledi, ona ifade bırakamazsınız.");
+            }
+        }
+
+        string finalEmoji = emoji;
+        if (msg.Reactions != null && msg.Reactions.TryGetValue(myNickname, out var existingEmoji) && existingEmoji == emoji)
+        {
+            // Aynı emojiye tıklandıysa kaldır
+            msg.Reactions.Remove(myNickname);
+            var update = Builders<ChatMessage>.Update.Set(m => m.Reactions, msg.Reactions);
+            await _messages.UpdateOneAsync(m => m.Id == messageId, update);
+            finalEmoji = ""; // Kaldırıldığını belirtmek için
+        }
+        else
+        {
+            // Farklı emojiye tıklandıysa veya ilk kez atılıyorsa ekle/güncelle
+            if (msg.Reactions == null) msg.Reactions = new Dictionary<string, string>();
+            msg.Reactions[myNickname] = emoji;
+            
+            var update = Builders<ChatMessage>.Update.Set(m => m.Reactions, msg.Reactions);
+            await _messages.UpdateOneAsync(m => m.Id == messageId, update);
+        }
+
+        // Notify both parties if they are online
+        if (_users.TryGetValue(msg.SenderNickname, out var senderId))
+        {
+            await Clients.Client(senderId).SendAsync("ReceiveReaction", messageId, myNickname, finalEmoji);
+        }
+        
+        if (msg.SenderNickname != msg.ReceiverNickname && _users.TryGetValue(msg.ReceiverNickname, out var receiverId))
+        {
+            await Clients.Client(receiverId).SendAsync("ReceiveReaction", messageId, myNickname, finalEmoji);
         }
     }
 
