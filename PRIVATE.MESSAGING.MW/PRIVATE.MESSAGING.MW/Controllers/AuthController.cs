@@ -102,10 +102,28 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Invalid or expired OTP" });
         }
 
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "Unknown IP";
+        var userAgent = HttpContext.Request.Headers["User-Agent"].ToString();
+        if (string.IsNullOrEmpty(userAgent)) userAgent = "Unknown Device";
+
+        var newLog = new DeviceLog
+        {
+            IpAddress = ipAddress,
+            DeviceName = userAgent.Length > 50 ? userAgent.Substring(0, 50) + "..." : userAgent,
+            LastActiveAt = DateTime.UtcNow
+        };
+
+        var logs = user.DeviceLogs ?? new List<DeviceLog>();
+        logs.Add(newLog);
+        
+        // Keep only last 10 logs to save space
+        if (logs.Count > 10) logs = logs.Skip(logs.Count - 10).ToList();
+
         var update = Builders<User>.Update
             .Set(u => u.Otp, null)
             .Set(u => u.OtpExpiry, null)
-            .Set(u => u.LastSeen, DateTime.UtcNow);
+            .Set(u => u.LastSeen, DateTime.UtcNow)
+            .Set(u => u.DeviceLogs, logs);
 
         await _users.UpdateOneAsync(u => u.Id == user.Id, update);
 

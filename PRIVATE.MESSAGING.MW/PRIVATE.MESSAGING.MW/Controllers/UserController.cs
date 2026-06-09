@@ -51,7 +51,8 @@ public class UserController : ControllerBase
                 nickname = targetUser.Nickname, 
                 publicKey = targetUser.PublicKey, 
                 profilePictureBase64 = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=",
-                lastSeen = (DateTime?)null 
+                lastSeen = (DateTime?)null,
+                isOnline = false
             });
         }
 
@@ -59,7 +60,8 @@ public class UserController : ControllerBase
             nickname = targetUser.Nickname, 
             publicKey = targetUser.PublicKey, 
             profilePictureBase64 = targetUser.ProfilePictureBase64,
-            lastSeen = targetUser.LastSeen
+            lastSeen = targetUser.LastSeen,
+            isOnline = targetUser.IsOnline
         });
     }
 
@@ -106,7 +108,8 @@ public class UserController : ControllerBase
             .Select(g => new 
             {
                 ContactNickname = g.Key,
-                LastMessage = g.First() // Since it's sorted descending, First() is the latest message
+                LastMessage = g.First(), // Since it's sorted descending, First() is the latest message
+                UnreadCount = g.Count(m => m.ReceiverNickname == nickname && !m.IsRead)
             }).ToList();
 
         // Attach profile pictures of the contacts
@@ -122,11 +125,25 @@ public class UserController : ControllerBase
             {
                 ContactNickname = i.ContactNickname,
                 ContactProfilePicture = iAmBlocked ? "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" : contactUser?.ProfilePictureBase64,
-                LastMessage = i.LastMessage
+                LastMessage = i.LastMessage,
+                UnreadCount = i.UnreadCount
             };
         });
 
         return Ok(result);
+    }
+
+    [Authorize]
+    [HttpGet("sessions")]
+    public async Task<IActionResult> GetSessions()
+    {
+        var nickname = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(nickname)) return Unauthorized();
+
+        var user = await _users.Find(u => u.Nickname == nickname).FirstOrDefaultAsync();
+        if (user == null) return Unauthorized();
+
+        return Ok(user.DeviceLogs ?? new List<DeviceLog>());
     }
 
     [Authorize]

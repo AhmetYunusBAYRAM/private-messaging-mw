@@ -19,14 +19,24 @@ public class ChatHub : Hub
         _messages = database.GetCollection<ChatMessage>("ChatMessages");
     }
 
-    public override Task OnConnectedAsync()
+    public override async Task OnConnectedAsync()
     {
         var nickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (!string.IsNullOrEmpty(nickname))
         {
             _users[nickname] = Context.ConnectionId;
+            
+            var db = _messages.Database;
+            var usersCol = db.GetCollection<User>("Users");
+            var update = Builders<User>.Update
+                .Set(u => u.IsOnline, true)
+                .Set(u => u.LastSeen, DateTime.UtcNow);
+            await usersCol.UpdateOneAsync(u => u.Nickname == nickname, update);
+
+            // Broadcast to all
+            await Clients.All.SendAsync("UserPresenceUpdate", nickname, true, DateTime.UtcNow);
         }
-        return base.OnConnectedAsync();
+        await base.OnConnectedAsync();
     }
 
     public async Task<string> SendPrivateMessage(string to, string senderSymKey, string receiverSymKey, string payload, string? replyToMessageId = null)
@@ -172,13 +182,50 @@ public class ChatHub : Hub
         }
     }
 
-    public override Task OnDisconnectedAsync(Exception? exception)
+    public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var nickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (!string.IsNullOrEmpty(nickname))
         {
             _users.TryRemove(nickname, out _);
+            
+            var db = _messages.Database;
+            var usersCol = db.GetCollection<User>("Users");
+            var update = Builders<User>.Update
+                .Set(u => u.IsOnline, false)
+                .Set(u => u.LastSeen, DateTime.UtcNow);
+            await usersCol.UpdateOneAsync(u => u.Nickname == nickname, update);
+
+            await Clients.All.SendAsync("UserPresenceUpdate", nickname, false, DateTime.UtcNow);
         }
-        return base.OnDisconnectedAsync(exception);
+        await base.OnDisconnectedAsync(exception);
+    }
+
+    public async Task MarkMessagesAsRead(string targetNickname)
+    {
+        var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(myNickname)) return;
+
+        // Find messages sent BY targetNickname TO myNickname that are unread
+        var filter = Builders<ChatMessage>.Filter.And(
+            Builders<ChatMessage>.Filter.Eq(m => m.SenderNickname, targetNickname),
+            Builders<ChatMessage>.Filter.Eq(m => m.ReceiverNickname, myNickname),
+            Builders<ChatMessage>.Filter.Eq(m => m.IsRead, false)
+        );
+
+        var update = Builders<ChatMessage>.Update
+            .Set(m => m.IsRead, true)
+            .Set(m => m.ReadAt, DateTime.UtcNow);
+
+        var result = await _messages.UpdateManyAsync(filter, update);
+
+        if (result.ModifiedCount > 0)
+        {
+            // Notify the target that their messages were read
+            if (_users.TryGetValue(targetNickname, out var targetId))
+            {
+                await Clients.Client(targetId).SendAsync("MessagesRead", myNickname);
+            }
+        }
     }
 }

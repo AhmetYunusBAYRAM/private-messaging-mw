@@ -22,6 +22,9 @@ public class ChatMessage
     
     public bool IsDeleted { get; set; } = false;
     
+    public bool IsRead { get; set; } = false;
+    public DateTime? ReadAt { get; set; }
+    
     // Key: Nickname, Value: Emoji (e.g., "❤️", "👍")
     public Dictionary<string, string> Reactions { get; set; } = new();
 }

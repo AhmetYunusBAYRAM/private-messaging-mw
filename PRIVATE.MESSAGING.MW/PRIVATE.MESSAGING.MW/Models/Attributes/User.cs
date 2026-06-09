@@ -21,6 +21,16 @@ public class User
     public List<BlockedUserInfo> BlockedUsers { get; set; } = new();
 
     public DateTime LastSeen { get; set; }
+    public bool IsOnline { get; set; } = false;
+
+    public List<DeviceLog> DeviceLogs { get; set; } = new();
+}
+
+public class DeviceLog
+{
+    public string IpAddress { get; set; } = string.Empty;
+    public string DeviceName { get; set; } = string.Empty;
+    public DateTime LastActiveAt { get; set; }
 }
 
 public class BlockedUserInfo

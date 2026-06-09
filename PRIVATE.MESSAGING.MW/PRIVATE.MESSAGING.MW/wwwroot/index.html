@@ -205,7 +205,7 @@
         }
 
         // --- RENDER MESSAGE ---
-        function renderMessage(cId, msgId, sender, text, timestamp, reactions = {}, replyToId = null, isDeleted = false) {
+        function renderMessage(cId, msgId, sender, text, timestamp, reactions = {}, replyToId = null, isDeleted = false, isRead = false) {
             const logs = document.getElementById(`log${cId}`);
             const c = clients[cId];
             const isMe = sender === c.nickname;
@@ -257,6 +257,11 @@
                 renderedText = `<div>${text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`;
             }
 
+            let tickHtml = '';
+            if (isMe && !isDeleted) {
+                tickHtml = isRead ? '<span style="color:#4db8ff; font-weight:bold;">✓✓</span>' : '<span style="color:#aaa;">✓</span>';
+            }
+
             const html = `
                 <div class="msg-container ${isMe ? 'msg-out' : 'msg-in'}" id="msgBox_${cId}_${msgId}"
                      ondblclick="!${isDeleted} && setReply('${cId}', '${msgId}')"
@@ -278,7 +283,7 @@
                          ontouchcancel="cancelPress()">
                         ${replyHtml}
                         ${renderedText}
-                        <span class="msg-time">${timeStr}</span>
+                        <span class="msg-time">${timeStr} <span id="tick_${cId}_${msgId}">${tickHtml}</span></span>
                         ${rxHtml}
                         ${!isDeleted ? `
                         <div class="reaction-menu" id="rxMenu_${cId}_${msgId}">
@@ -847,7 +852,8 @@
                 }
 
                 if (document.getElementById(`to${cId}`).value === from) {
-                    renderMessage(cId, msgId, from, originalText, new Date().toISOString(), {}, replyToId, false);
+                    renderMessage(cId, msgId, from, originalText, new Date().toISOString(), {}, replyToId, false, false);
+                    c.connection.invoke("MarkMessagesAsRead", from).catch(console.error);
                 }
                 await loadInbox(cId);
             });
@@ -861,6 +867,18 @@
                 const box = document.getElementById(`msgBox_${cId}_${msgId}`);
                 if (box) loadHistory(cId);
                 loadInbox(cId);
+            });
+
+            c.connection.on("MessagesRead", (readerNickname) => {
+                if (document.getElementById(`to${cId}`).value === readerNickname) {
+                    loadHistory(cId);
+                }
+            });
+
+            c.connection.on("UserPresenceUpdate", (nickname, isOnline, lastSeen) => {
+                if (document.getElementById(`to${cId}`).value === nickname) {
+                    updatePresenceUI(cId, isOnline, lastSeen);
+                }
             });
 
             await c.connection.start();
@@ -964,6 +982,7 @@
                 }
 
                 const picSrc = item.contactProfilePicture || 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+                const unreadBadge = item.unreadCount > 0 ? `<span style="background:red; color:white; border-radius:50%; padding:2px 6px; font-size:10px; margin-left:5px;">${item.unreadCount}</span>` : '';
                 
                 const div = document.createElement('div');
                 div.className = 'inbox-item';
@@ -975,7 +994,7 @@
                 div.innerHTML = `
                     <img src="${picSrc}">
                     <div class="inbox-details">
-                        <span class="inbox-name">${item.contactNickname}</span>
+                        <span class="inbox-name">${item.contactNickname} ${unreadBadge}</span>
                         <span class="inbox-msg">${snippet.substring(0, 30)}...</span>
                     </div>
                 `;
@@ -995,6 +1014,22 @@
                 headers: { 'Authorization': `Bearer ${c.token}` }
             });
             const history = await res.json();
+
+            // Fetch target profile for presence
+            try {
+                const pRes = await fetch(`${API_BASE}/api/user/${target}/profile`, {
+                    headers: { 'Authorization': `Bearer ${c.token}` }
+                });
+                if (pRes.ok) {
+                    const pData = await pRes.json();
+                    updatePresenceUI(cId, pData.isOnline, pData.lastSeen); 
+                }
+            } catch(e){}
+
+            // Mark as read
+            if (c.connection) {
+                c.connection.invoke("MarkMessagesAsRead", target).catch(console.error);
+            }
 
             history.forEach(msg => {
                 if (msg.isDeleted) {
@@ -1016,7 +1051,7 @@
                     // Do not render signaling commands in history chat logs
                     if (originalText.startsWith('[WEBRTC_')) return;
                     
-                    renderMessage(cId, msg.id, msg.senderNickname, originalText, msg.timestamp, msg.reactions || {}, msg.replyToMessageId, false);
+                    renderMessage(cId, msg.id, msg.senderNickname, originalText, msg.timestamp, msg.reactions || {}, msg.replyToMessageId, false, msg.isRead);
                 } else {
                     addSysLog(cId, `[ŞİFRELİ GEÇMİŞ] Mesaj çözülemedi`, true);
                 }
@@ -1103,6 +1138,64 @@
         <img id="enlargedImg" style="max-width:90%; max-height:90%; border-radius:8px;">
     </div>
 
+    <!-- Modal for Device Sessions -->
+    <div id="sessionsModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9998; justify-content:center; align-items:center;">
+        <div style="background:#2d2d2d; padding:20px; border-radius:8px; width:80%; max-width:500px; max-height:80%; overflow-y:auto;">
+            <h3 style="margin-top:0; border-bottom:1px solid #444; padding-bottom:10px;">Cihaz Kayıtlarım (Oturumlar)</h3>
+            <div id="sessionsList" style="margin-bottom:15px; font-size:12px;">Yükleniyor...</div>
+            <button onclick="document.getElementById('sessionsModal').style.display='none'" style="width:100%; background:#dc3545;">Kapat</button>
+        </div>
+    </div>
+
+    <script>
+        async function showSessions(cId) {
+            document.getElementById('sessionsModal').style.display = 'flex';
+            const list = document.getElementById('sessionsList');
+            list.innerHTML = 'Yükleniyor...';
+            
+            const c = clients[cId];
+            try {
+                const res = await fetch(`${API_BASE}/api/user/sessions`, {
+                    headers: { 'Authorization': `Bearer ${c.token}` }
+                });
+                if (!res.ok) throw new Error("Oturumlar alınamadı");
+                
+                const sessions = await res.json();
+                if (sessions.length === 0) {
+                    list.innerHTML = 'Hiç cihaz kaydı bulunamadı.';
+                    return;
+                }
+                
+                list.innerHTML = '';
+                // Reverse to show latest first
+                [...sessions].reverse().forEach(s => {
+                    const dt = new Date(s.lastActiveAt).toLocaleString();
+                    list.innerHTML += `
+                        <div style="background:#1e1e1e; padding:10px; border-radius:5px; margin-bottom:10px; border-left:3px solid #17a2b8;">
+                            <strong>IP:</strong> ${s.ipAddress} <br/>
+                            <strong>Cihaz:</strong> <span style="color:#aaa;">${s.deviceName}</span> <br/>
+                            <strong>Son Görülme:</strong> ${dt}
+                        </div>
+                    `;
+                });
+            } catch(e) {
+                list.innerHTML = 'Hata: ' + e.message;
+            }
+        }
+
+        function updatePresenceUI(cId, isOnline, lastSeen) {
+            const el = document.getElementById(`presence${cId}`);
+            if (!el) return;
+            
+            if (isOnline) {
+                el.innerHTML = '<span style="color:#28a745; font-weight:bold;">🟢 Çevrimiçi</span>';
+            } else {
+                const dt = lastSeen ? new Date(lastSeen).toLocaleString([], {hour: '2-digit', minute:'2-digit', day:'2-digit', month:'short'}) : 'Bilinmiyor';
+                el.innerHTML = `Son Görülme: ${dt}`;
+            }
+        }
+    </script>
+
     <!-- UI GENERATOR -->
     <script>
         function createClientUI(id) {
@@ -1146,10 +1239,11 @@
                 <div id="app${id}" style="display:none;">
                     <div class="profile-header">
                         <img id="myPic${id}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=">
-                        <div>
+                        <div style="flex-grow: 1;">
                             <h3 style="border:none; margin:0;">Hoşgeldin <span id="myName${id}"></span></h3>
                             <input type="file" style="font-size:10px; width:180px;" onchange="uploadPic(${id}, this)" accept="image/*">
                         </div>
+                        <button onclick="showSessions(${id})" style="width:auto; padding:5px; font-size:11px; background:#17a2b8;">📱 Cihazlarım</button>
                     </div>
 
                     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -1174,6 +1268,8 @@
                         <button style="width:auto; padding:8px 12px; background:#007bff; margin:0;" onclick="startCall(${id})" title="Sesli Ara">📞</button>
                         <button id="blockBtn${id}" class="block-btn" style="width:100px; margin:0;" onclick="toggleBlock(${id})">Engelle</button>
                     </div>
+                    
+                    <div id="presence${id}" style="font-size: 11px; margin-top: -8px; margin-bottom: 8px; color: #888; min-height: 15px;"></div>
                     
                     <div class="logs" id="log${id}"></div>
                     
