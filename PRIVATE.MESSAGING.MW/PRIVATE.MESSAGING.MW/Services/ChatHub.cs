@@ -139,6 +139,39 @@ public class ChatHub : Hub
         }
     }
 
+    public async Task DeleteMessage(string messageId)
+    {
+        var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(myNickname)) return;
+
+        var msg = await _messages.Find(m => m.Id == messageId).FirstOrDefaultAsync();
+        if (msg == null) return;
+
+        if (msg.SenderNickname != myNickname)
+        {
+            throw new HubException("Sadece kendi gönderdiğiniz mesajları silebilirsiniz.");
+        }
+
+        var update = Builders<ChatMessage>.Update
+            .Set(m => m.IsDeleted, true)
+            .Set(m => m.EncryptedPayload, "")
+            .Set(m => m.SenderEncryptedSymKey, "")
+            .Set(m => m.ReceiverEncryptedSymKey, "")
+            .Set(m => m.Reactions, new Dictionary<string, string>());
+
+        await _messages.UpdateOneAsync(m => m.Id == messageId, update);
+
+        if (_users.TryGetValue(msg.SenderNickname, out var senderId))
+        {
+            await Clients.Client(senderId).SendAsync("MessageDeleted", messageId);
+        }
+        
+        if (msg.SenderNickname != msg.ReceiverNickname && _users.TryGetValue(msg.ReceiverNickname, out var receiverId))
+        {
+            await Clients.Client(receiverId).SendAsync("MessageDeleted", messageId);
+        }
+    }
+
     public override Task OnDisconnectedAsync(Exception? exception)
     {
         var nickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;

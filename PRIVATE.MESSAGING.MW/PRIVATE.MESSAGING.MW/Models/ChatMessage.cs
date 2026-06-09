@@ -18,7 +18,9 @@ public class ChatMessage
     public string ReceiverEncryptedSymKey { get; set; } = string.Empty;
     
     public string EncryptedPayload { get; set; } = string.Empty;
-    public DateTime Timestamp { get; set; }
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    
+    public bool IsDeleted { get; set; } = false;
     
     // Key: Nickname, Value: Emoji (e.g., "❤️", "👍")
     public Dictionary<string, string> Reactions { get; set; } = new();
