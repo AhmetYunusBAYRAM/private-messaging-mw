@@ -1,5 +1,7 @@
+using Microsoft.Extensions.Caching.Distributed;
 using MongoDB.Driver;
 using Moq;
+using PRIVATE.MESSAGING.Core.Entities;
 using PRIVATE.MESSAGING.Core.Entities.Attributes;
 using PRIVATE.MESSAGING.Services;
 using PRIVATE.MESSAGING.Tests.Helpers;
@@ -31,7 +33,9 @@ public class UserServiceTests
         db.Setup(d => d.GetCollection<Core.Entities.ChatMessage>("ChatMessages", It.IsAny<MongoCollectionSettings>()))
           .Returns(msgCollection.Object);
 
-        return (new UserService(db.Object), userCollection);
+        var cacheMock = new Mock<IDistributedCache>();
+
+        return (new UserService(db.Object, cacheMock.Object), userCollection);
     }
 
     [Fact]
@@ -88,9 +92,9 @@ public class UserServiceTests
         };
         var (service, _) = CreateService(users);
 
-        var result = await service.GetContactsAsync("requester", "alice");
+        var result = await service.GetContactsAsync("requester", "alice", 1, 50);
 
-        var list = result.ToList();
+        var list = result.Items.ToList();
         Assert.All(list, u =>
         {
             var json = System.Text.Json.JsonSerializer.Serialize(u);

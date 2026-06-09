@@ -18,12 +18,12 @@ public class MessageController : ControllerBase
 
     [Authorize]
     [HttpGet("history/{contactNickname}")]
-    public async Task<IActionResult> GetHistory(string contactNickname)
+    public async Task<IActionResult> GetHistory(string contactNickname, [FromQuery] int page = 1, [FromQuery] int limit = 50)
     {
         var myNickname = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(myNickname)) return Unauthorized();
 
-        var messages = await _messageService.GetHistoryAsync(myNickname, contactNickname);
+        var messages = await _messageService.GetHistoryAsync(myNickname, contactNickname, page, limit);
         return Ok(messages);
     }
 

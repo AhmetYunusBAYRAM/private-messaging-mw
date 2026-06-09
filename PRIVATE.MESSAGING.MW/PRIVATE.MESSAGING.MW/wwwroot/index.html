@@ -369,6 +369,29 @@
         }
 
         // --- WEBRTC VOICE CALLING ---
+        async function refreshJwtToken(cId) {
+            const c = clients[cId];
+            if (!c.token || !c.refreshToken) return;
+            
+            try {
+                const res = await fetch(`${API_BASE}/api/auth/refresh-token`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ expiredToken: c.token, refreshToken: c.refreshToken })
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    c.token = data.token;
+                    c.refreshToken = data.refreshToken;
+                } else {
+                    console.log("Refresh token expired or invalid. User needs to login again.");
+                }
+            } catch(e) {
+                console.error("Error refreshing token:", e);
+            }
+        }
+
         async function initPeerConnection(cId, targetNickname) {
             const c = clients[cId];
             if (c.pc) c.pc.close();
@@ -766,6 +789,8 @@
 
             const data = await res.json();
             
+            setInterval(() => refreshJwtToken(cId), 14 * 60 * 1000); // 14 minutes
+            
             let savedPrivateKey = localStorage.getItem(`rsa_private_${email}`);
             
             if (!savedPrivateKey) {
@@ -818,6 +843,7 @@
             }
 
             c.token = data.token;
+            c.refreshToken = data.refreshToken;
             c.nickname = data.nickname;
 
             localStorage.setItem(`token${cId}`, c.token);
@@ -948,7 +974,8 @@
                 });
                 
                 if (!res.ok) return;
-                const contacts = await res.json();
+                const contactsData = await res.json();
+                const contacts = contactsData.items || [];
                 
                 resultsDiv.innerHTML = '';
                 if (contacts.length === 0) {
@@ -1011,7 +1038,7 @@
                     }
                 }
 
-                const picSrc = item.contactProfilePicture || 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+                const picSrc = item.profilePictureBase64 || 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
                 const unreadBadge = item.unreadCount > 0 ? `<span style="background:red; color:white; border-radius:50%; padding:2px 6px; font-size:10px; margin-left:5px;">${item.unreadCount}</span>` : '';
                 
                 const div = document.createElement('div');
@@ -1040,10 +1067,11 @@
             document.getElementById(`log${cId}`).innerHTML = ''; 
             c.messages = {}; 
             
-            const res = await fetch(`${API_BASE}/api/message/history/${target}`, {
+            const res = await fetch(`${API_BASE}/api/message/history/${target}?page=1&limit=50`, {
                 headers: { 'Authorization': `Bearer ${c.token}` }
             });
-            const history = await res.json();
+            const historyData = await res.json();
+            const history = historyData.items || [];
 
             // Fetch target profile for presence
             try {

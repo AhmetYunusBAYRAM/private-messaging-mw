@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+using Microsoft.Extensions.Caching.Distributed;
 using MongoDB.Driver;
 using PRIVATE.MESSAGING.Core.Entities;
 using PRIVATE.MESSAGING.Core.Entities.Attributes;
@@ -10,27 +10,40 @@ public class ChatService : IChatService
 {
     private readonly IMongoCollection<ChatMessage> _messages;
     private readonly IMongoCollection<User> _users;
-    private readonly ConcurrentDictionary<string, string> _onlineUsers = new();
+    private readonly IDistributedCache _cache;
 
-    public ChatService(IMongoDatabase database)
+    public ChatService(IMongoDatabase database, IDistributedCache cache)
     {
         _messages = database.GetCollection<ChatMessage>("ChatMessages");
         _users = database.GetCollection<User>("Users");
+        _cache = cache;
     }
 
     public void UserConnected(string nickname, string connectionId)
     {
-        _onlineUsers[nickname] = connectionId;
+        var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24) };
+        _cache.SetString($"conn_{nickname}", connectionId, options);
     }
 
     public bool UserDisconnected(string nickname)
     {
-        return _onlineUsers.TryRemove(nickname, out _);
+        try
+        {
+            var key = $"conn_{nickname}";
+            if (_cache.GetString(key) == null) return false;
+            
+            _cache.Remove(key);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public string? GetConnectionId(string nickname)
     {
-        return _onlineUsers.TryGetValue(nickname, out var id) ? id : null;
+        return _cache.GetString($"conn_{nickname}");
     }
 
     public async Task<ChatMessage> SendPrivateMessageAsync(string senderNickname, string to, string senderSymKey, string receiverSymKey, string payload, string? replyToMessageId)

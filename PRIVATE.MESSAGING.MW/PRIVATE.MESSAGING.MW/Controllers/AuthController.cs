@@ -48,8 +48,22 @@ public class AuthController : ControllerBase
         return Ok(new
         {
             token = result.Token,
+            refreshToken = result.RefreshToken,
             nickname = result.Nickname,
             encryptedPrivateKey = result.EncryptedPrivateKey
+        });
+    }
+
+    [HttpPost("refresh-token")]
+    public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)
+    {
+        var result = await _authService.RefreshTokenAsync(request.ExpiredToken, request.RefreshToken);
+        if (!result.Success) return Unauthorized(new { message = result.Message });
+
+        return Ok(new
+        {
+            token = result.Token,
+            refreshToken = result.RefreshToken
         });
     }
 

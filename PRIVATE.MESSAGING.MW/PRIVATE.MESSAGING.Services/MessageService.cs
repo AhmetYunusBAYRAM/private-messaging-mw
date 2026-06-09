@@ -1,6 +1,7 @@
 using MongoDB.Driver;
 using PRIVATE.MESSAGING.Core.Entities;
 using PRIVATE.MESSAGING.Core.Interfaces;
+using PRIVATE.MESSAGING.DTOs.Responses;
 
 namespace PRIVATE.MESSAGING.Services;
 
@@ -13,7 +14,7 @@ public class MessageService : IMessageService
         _messages = database.GetCollection<ChatMessage>("ChatMessages");
     }
 
-    public async Task<IEnumerable<ChatMessage>> GetHistoryAsync(string myNickname, string contactNickname)
+    public async Task<PagedResponse<ChatMessage>> GetHistoryAsync(string myNickname, string contactNickname, int page, int limit)
     {
         var filter = Builders<ChatMessage>.Filter.And(
             Builders<ChatMessage>.Filter.Or(
@@ -31,7 +32,24 @@ public class MessageService : IMessageService
             )
         );
         
-        return await _messages.Find(filter).SortBy(x => x.Timestamp).ToListAsync();
+        var totalCount = await _messages.CountDocumentsAsync(filter);
+        
+        var messages = await _messages.Find(filter)
+            .SortByDescending(x => x.Timestamp)
+            .Skip((page - 1) * limit)
+            .Limit(limit)
+            .ToListAsync();
+            
+        // Reverse to return them in chronological order for the client
+        messages.Reverse();
+
+        return new PagedResponse<ChatMessage>
+        {
+            Items = messages,
+            TotalCount = (int)totalCount,
+            Page = page,
+            Limit = limit
+        };
     }
 
     public async Task ClearHistoryAsync(string myNickname, string contactNickname)

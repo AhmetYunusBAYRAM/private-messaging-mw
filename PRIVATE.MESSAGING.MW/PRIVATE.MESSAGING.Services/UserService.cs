@@ -1,7 +1,10 @@
+using Microsoft.Extensions.Caching.Distributed;
 using MongoDB.Driver;
 using PRIVATE.MESSAGING.Core.Entities;
 using PRIVATE.MESSAGING.Core.Entities.Attributes;
 using PRIVATE.MESSAGING.Core.Interfaces;
+using PRIVATE.MESSAGING.DTOs.Responses;
+using System.Text.Json;
 
 namespace PRIVATE.MESSAGING.Services;
 
@@ -9,24 +12,47 @@ public class UserService : IUserService
 {
     private readonly IMongoCollection<User> _users;
     private readonly IMongoCollection<ChatMessage> _messages;
+    private readonly IDistributedCache _cache;
 
-    public UserService(IMongoDatabase database)
+    public UserService(IMongoDatabase database, IDistributedCache cache)
     {
         _users = database.GetCollection<User>("Users");
         _messages = database.GetCollection<ChatMessage>("ChatMessages");
+        _cache = cache;
     }
 
     public async Task<bool> UpdateProfilePictureAsync(string nickname, string base64Image)
     {
         var update = Builders<User>.Update.Set(u => u.ProfilePictureBase64, base64Image);
         var result = await _users.UpdateOneAsync(u => u.Nickname == nickname, update);
+        
+        if (result.MatchedCount > 0)
+        {
+            await _cache.RemoveAsync($"profile_{nickname}");
+        }
+        
         return result.MatchedCount > 0;
     }
 
     public async Task<object?> GetProfileAsync(string targetNickname, string? callerNickname)
     {
-        var targetUser = await _users.Find(u => u.Nickname == targetNickname).FirstOrDefaultAsync();
-        if (targetUser == null) return null;
+        User? targetUser = null;
+        var cacheKey = $"profile_{targetNickname}";
+        var cachedProfile = await _cache.GetStringAsync(cacheKey);
+
+        if (!string.IsNullOrEmpty(cachedProfile))
+        {
+            targetUser = JsonSerializer.Deserialize<User>(cachedProfile);
+        }
+
+        if (targetUser == null)
+        {
+            targetUser = await _users.Find(u => u.Nickname == targetNickname).FirstOrDefaultAsync();
+            if (targetUser == null) return null;
+
+            var cacheOptions = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30) };
+            await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(targetUser), cacheOptions);
+        }
 
         if (callerNickname != null && targetUser.BlockedUsers != null && targetUser.BlockedUsers.Any(b => b.Nickname == callerNickname))
         {
@@ -48,7 +74,7 @@ public class UserService : IUserService
         };
     }
 
-    public async Task<IEnumerable<object>> GetContactsAsync(string myNickname, string? query)
+    public async Task<PagedResponse<object>> GetContactsAsync(string myNickname, string? query, int page, int limit)
     {
         var filterBuilder = Builders<User>.Filter;
         var filter = filterBuilder.Ne(u => u.Nickname, myNickname);
@@ -59,14 +85,27 @@ public class UserService : IUserService
             filter = filterBuilder.And(filter, searchFilter);
         }
 
-        var users = await _users.Find(filter).Limit(7).ToListAsync();
+        var totalCount = await _users.CountDocumentsAsync(filter);
+
+        var users = await _users.Find(filter)
+            .Skip((page - 1) * limit)
+            .Limit(limit)
+            .ToListAsync();
         
-        return users.Select(u => new 
+        var items = users.Select(u => new 
         {
             nickname = u.Nickname,
             profilePictureBase64 = u.BlockedUsers != null && u.BlockedUsers.Any(b => b.Nickname == myNickname) ? "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" : u.ProfilePictureBase64,
             lastSeen = u.BlockedUsers != null && u.BlockedUsers.Any(b => b.Nickname == myNickname) ? (DateTime?)null : u.LastSeen
-        });
+        }).Cast<object>();
+
+        return new PagedResponse<object>
+        {
+            Items = items,
+            TotalCount = (int)totalCount,
+            Page = page,
+            Limit = limit
+        };
     }
 
     public async Task<IEnumerable<object>> GetInboxAsync(string nickname)

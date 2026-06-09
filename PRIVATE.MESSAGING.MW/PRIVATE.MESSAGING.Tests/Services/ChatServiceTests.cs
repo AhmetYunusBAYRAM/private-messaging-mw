@@ -1,5 +1,10 @@
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Moq;
+using PRIVATE.MESSAGING.Core.Entities;
 using PRIVATE.MESSAGING.Core.Entities.Attributes;
 using PRIVATE.MESSAGING.Services;
 using PRIVATE.MESSAGING.Tests.Helpers;
@@ -150,6 +155,9 @@ public class ChatServiceTests
         db.Setup(d => d.GetCollection<Core.Entities.ChatMessage>("ChatMessages", It.IsAny<MongoCollectionSettings>()))
           .Returns(msgCollection.Object);
 
-        return new ChatService(db.Object);
+        var options = Options.Create(new MemoryDistributedCacheOptions());
+        var cache = new MemoryDistributedCache(options);
+
+        return new ChatService(db.Object, cache);
     }
 }

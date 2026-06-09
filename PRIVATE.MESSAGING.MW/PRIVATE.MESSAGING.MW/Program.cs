@@ -20,7 +20,11 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddSingleton<IChatService, ChatService>();
 
 builder.Services.AddMemoryCache();
-
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = builder.Configuration.GetSection("RedisCacheOptions:Configuration").Value ?? "localhost:6379";
+    options.InstanceName = builder.Configuration.GetSection("RedisCacheOptions:InstanceName").Value ?? "PrivateMessaging_";
+});
 builder.Services.AddSingleton<IMongoClient>(sp =>
 {
     var settings = sp.GetRequiredService<IOptions<MongoDbSettings>>().Value;
