@@ -61,7 +61,10 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 builder.Services.AddControllers();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options => 
+{
+    options.MaximumReceiveMessageSize = 10 * 1024 * 1024; // 10MB limit for E2EE images
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
