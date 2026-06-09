@@ -67,7 +67,7 @@ public class UserController : ControllerBase
 
     [Authorize]
     [HttpGet("contacts")]
-    public async Task<IActionResult> GetContacts()
+    public async Task<IActionResult> GetContacts([FromQuery] string? query = null)
     {
         var myNickname = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(myNickname)) return Unauthorized();
@@ -75,8 +75,18 @@ public class UserController : ControllerBase
         var currentUser = await _users.Find(u => u.Nickname == myNickname).FirstOrDefaultAsync();
         if (currentUser == null) return Unauthorized();
 
-        // Get all other users
-        var users = await _users.Find(u => u.Nickname != myNickname).ToListAsync();
+        var filterBuilder = Builders<User>.Filter;
+        var filter = filterBuilder.Ne(u => u.Nickname, myNickname);
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            // Case-insensitive regex match for nickname
+            var searchFilter = filterBuilder.Regex(u => u.Nickname, new MongoDB.Bson.BsonRegularExpression(query, "i"));
+            filter = filterBuilder.And(filter, searchFilter);
+        }
+
+        // Get matching users with a limit of 7
+        var users = await _users.Find(filter).Limit(7).ToListAsync();
         
         var result = users.Select(u => new 
         {

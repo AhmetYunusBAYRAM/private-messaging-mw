@@ -700,7 +700,6 @@
 
                 await fetchProfile(cId);
                 await loadBlockedListUI(cId);
-                await loadContacts(cId);
                 await loadInbox(cId);
                 await startSignalR(cId);
             }
@@ -831,7 +830,6 @@
 
             await fetchProfile(cId);
             await loadBlockedListUI(cId);
-            await loadContacts(cId);
             await loadInbox(cId);
             await startSignalR(cId);
         }
@@ -928,34 +926,58 @@
             reader.readAsDataURL(file);
         }
 
-        async function loadContacts(cId) {
+        function debounceSearchContacts(cId) {
             const c = clients[cId];
+            if (c.searchTimer) clearTimeout(c.searchTimer);
+            c.searchTimer = setTimeout(() => searchContacts(cId), 300);
+        }
+
+        async function searchContacts(cId) {
+            const c = clients[cId];
+            const query = document.getElementById(`contactSearch${cId}`).value.trim();
+            const resultsDiv = document.getElementById(`searchResults${cId}`);
+
+            if (!query) {
+                resultsDiv.style.display = 'none';
+                return;
+            }
+
             try {
-                const res = await fetch(`${API_BASE}/api/user/contacts`, {
+                const res = await fetch(`${API_BASE}/api/user/contacts?query=${encodeURIComponent(query)}`, {
                     headers: { 'Authorization': `Bearer ${c.token}` }
                 });
                 
                 if (!res.ok) return;
                 const contacts = await res.json();
                 
-                const select = document.getElementById(`contacts${cId}`);
-                select.innerHTML = '<option value="">-- Sohbet Başlatılacak Kişiyi Seç --</option>';
-
-                contacts.forEach(u => {
-                    select.innerHTML += `<option value="${u.nickname}">${u.nickname}</option>`;
-                });
+                resultsDiv.innerHTML = '';
+                if (contacts.length === 0) {
+                    resultsDiv.innerHTML = '<div style="padding:10px; color:#aaa; font-size:12px;">Sonuç bulunamadı.</div>';
+                } else {
+                    contacts.forEach(u => {
+                        const picSrc = u.profilePictureBase64 || 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+                        resultsDiv.innerHTML += `
+                            <div class="inbox-item" style="padding:8px 10px; cursor:pointer; border-bottom:1px solid #444;" onclick="startChatWith('${cId}', '${u.nickname}')">
+                                <img src="${picSrc}" style="width:30px; height:30px;">
+                                <div class="inbox-details">
+                                    <span class="inbox-name">${u.nickname}</span>
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+                resultsDiv.style.display = 'block';
             } catch (err) {
-                console.error("loadContacts JS hatası:", err);
+                console.error("searchContacts JS hatası:", err);
             }
         }
 
-        function startNewChat(cId) {
-            const val = document.getElementById(`contacts${cId}`).value;
-            if(val) {
-                document.getElementById(`to${cId}`).value = val;
-                loadHistory(cId);
-                updateBlockButtonState(cId, val);
-            }
+        function startChatWith(cId, nickname) {
+            document.getElementById(`contactSearch${cId}`).value = '';
+            document.getElementById(`searchResults${cId}`).style.display = 'none';
+            document.getElementById(`to${cId}`).value = nickname;
+            loadHistory(cId);
+            updateBlockButtonState(cId, nickname);
         }
 
         async function loadInbox(cId) {
@@ -1138,7 +1160,6 @@
                 alert(isBlocked ? "Engel kaldırıldı." : "Kullanıcı engellendi.");
                 await loadBlockedListUI(cId);
                 await loadInbox(cId);
-                await loadContacts(cId);
             }
         }
 
@@ -1153,7 +1174,6 @@
                 alert("Engel kaldırıldı.");
                 await loadBlockedListUI(cId);
                 await loadInbox(cId);
-                await loadContacts(cId);
             }
         }
 
@@ -1283,13 +1303,15 @@
                         <button onclick="showSessions(${id})" style="width:auto; padding:5px; font-size:11px; background:#17a2b8;">📱 Cihazlarım</button>
                     </div>
 
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <h4 style="border:none; margin:0;">Rehber (Yeni Sohbet)</h4>
-                        <button style="width:auto; padding:3px 10px; font-size:10px;" onclick="loadContacts(${id})">Rehberi Yenile</button>
+                    <div style="display:flex; justify-content:space-between; align-items:center; position:relative;">
+                        <h4 style="border:none; margin:0; margin-bottom:5px;">Rehber (Kişi Ara)</h4>
                     </div>
-                    <select id="contacts${id}" onchange="startNewChat(${id})" style="margin-bottom:15px;">
-                        <option value="">-- Sohbet Başlatılacak Kişiyi Seç --</option>
-                    </select>
+                    <div style="position:relative; margin-bottom:15px;">
+                        <input type="text" id="contactSearch${id}" placeholder="Kullanıcı ara..." oninput="debounceSearchContacts(${id})" style="margin-bottom:0;">
+                        <div id="searchResults${id}" style="display:none; position:absolute; top:100%; left:0; right:0; background:#333; border:1px solid #444; border-radius:4px; max-height:200px; overflow-y:auto; z-index:100; box-shadow:0 4px 6px rgba(0,0,0,0.3);">
+                            <!-- Sonuçlar buraya gelecek -->
+                        </div>
+                    </div>
 
                     <h4>DM Kutusu (Inbox) <button style="width:auto; padding:3px 10px; font-size:10px; float:right;" onclick="loadInbox(${id})">Yenile</button></h4>
                     <div class="inbox-list" id="inboxList${id}">
