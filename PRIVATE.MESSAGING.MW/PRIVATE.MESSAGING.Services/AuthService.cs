@@ -97,11 +97,16 @@ public class AuthService : IAuthService
         var refreshToken = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
         var refreshTokenExpiry = DateTime.UtcNow.AddDays(30);
 
+        var newRefreshTokenInfo = new RefreshTokenInfo
+        {
+            Token = refreshToken,
+            Expiry = refreshTokenExpiry
+        };
+
         var update = Builders<User>.Update
             .Set(u => u.Otp, null)
             .Set(u => u.OtpExpiry, null)
-            .Set(u => u.RefreshToken, refreshToken)
-            .Set(u => u.RefreshTokenExpiry, refreshTokenExpiry);
+            .Push(u => u.RefreshTokens, newRefreshTokenInfo);
 
         await _users.UpdateOneAsync(u => u.Id == user.Id, update);
 
@@ -166,19 +171,46 @@ public class AuthService : IAuthService
             if (string.IsNullOrEmpty(email)) return (false, "Invalid token claims", string.Empty, string.Empty);
 
             var user = await _users.Find(u => u.Email == email).FirstOrDefaultAsync();
-            if (user == null || user.RefreshToken != refreshToken || user.RefreshTokenExpiry <= DateTime.UtcNow)
+            if (user == null) return (false, "User not found", string.Empty, string.Empty);
+
+            var existingToken = user.RefreshTokens.FirstOrDefault(t => t.Token == refreshToken);
+
+            if (existingToken == null)
             {
-                return (false, "Invalid or expired refresh token", string.Empty, string.Empty);
+                return (false, "Invalid refresh token", string.Empty, string.Empty);
+            }
+
+            if (existingToken.IsRevoked)
+            {
+                // Token Theft Detected! Revoke all tokens for this user.
+                var revokeAllUpdate = Builders<User>.Update.Set("RefreshTokens.$[].IsRevoked", true);
+                await _users.UpdateOneAsync(u => u.Id == user.Id, revokeAllUpdate);
+                return (false, "Token theft detected. All sessions revoked.", string.Empty, string.Empty);
+            }
+
+            if (existingToken.IsExpired)
+            {
+                return (false, "Expired refresh token", string.Empty, string.Empty);
             }
 
             // Generate new tokens
             var newRefreshToken = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
             var newRefreshTokenExpiry = DateTime.UtcNow.AddDays(30);
 
-            var update = Builders<User>.Update
-                .Set(u => u.RefreshToken, newRefreshToken)
-                .Set(u => u.RefreshTokenExpiry, newRefreshTokenExpiry);
+            var newRefreshTokenInfo = new RefreshTokenInfo
+            {
+                Token = newRefreshToken,
+                Expiry = newRefreshTokenExpiry
+            };
 
+            // Revoke the old token and add the new one
+            var updateTokens = user.RefreshTokens;
+            var tokenIndex = updateTokens.FindIndex(t => t.Token == refreshToken);
+            updateTokens[tokenIndex].IsRevoked = true;
+            updateTokens[tokenIndex].ReplacedByToken = newRefreshToken;
+            updateTokens.Add(newRefreshTokenInfo);
+
+            var update = Builders<User>.Update.Set(u => u.RefreshTokens, updateTokens);
             await _users.UpdateOneAsync(u => u.Id == user.Id, update);
 
             var tokenDescriptor = new SecurityTokenDescriptor

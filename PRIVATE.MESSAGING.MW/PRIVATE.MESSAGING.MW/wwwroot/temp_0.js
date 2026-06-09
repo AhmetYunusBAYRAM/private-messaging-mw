@@ -710,15 +710,33 @@
                 const pin = prompt("Eski mesajlarınızı cihaz değiştirince kurtarabilmek için bir Kurtarma Parolası (PIN) belirleyin:");
                 if (!pin) return alert("Parola zorunludur!");
                 
-                const c = clients[cId];
-                c.rsa.getKey();
-                const publicKey = c.rsa.getPublicKey();
-                const privateKey = c.rsa.getPrivateKey();
-                
-                const encryptedPrivateKey = CryptoJS.AES.encrypt(privateKey, pin).toString();
-                localStorage.setItem(`rsa_private_${email}`, privateKey);
-                
-                body = { email, nickname, publicKey, encryptedPrivateKey };
+                alert("Güvenliğiniz için uçtan uca şifreleme anahtarları oluşturuluyor. Lütfen 3-5 saniye bekleyin...");
+
+                setTimeout(async () => {
+                    try {
+                        const c = clients[cId];
+                        c.rsa.getKey();
+                        const publicKey = c.rsa.getPublicKey();
+                        const privateKey = c.rsa.getPrivateKey();
+                        
+                        const encryptedPrivateKey = CryptoJS.AES.encrypt(privateKey, pin).toString();
+                        localStorage.setItem(`rsa_private_${email}`, privateKey);
+                        
+                        body = { email, nickname, publicKey, encryptedPrivateKey };
+
+                        const res = await fetch(`${API_BASE}${endpoint}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+
+                        if (res.ok) alert(`OTP gönderildi (Terminal ekranına bakınız).`);
+                        else { const data = await res.json(); alert(`Hata: ${data.message}`); }
+                    } catch (e) {
+                        alert("Kayıt sırasında bir hata oluştu: " + e.message);
+                    }
+                }, 100);
+                return;
             } else {
                 body = { email };
             }
@@ -1007,7 +1025,7 @@
             const inboxContainer = document.getElementById(`inboxList${cId}`);
             const fragment = document.createDocumentFragment();
 
-            inboxData.forEach(item => {
+            for (const item of inboxData) {
                 const msg = item.lastMessage;
                 let snippet = "[Şifreli Mesaj]";
 
@@ -1063,7 +1081,7 @@
                     </div>
                 `;
                 fragment.appendChild(div);
-            });
+            }
             
             inboxContainer.innerHTML = '';
             inboxContainer.appendChild(fragment);
@@ -1097,10 +1115,10 @@
                 c.connection.invoke("MarkMessagesAsRead", target).catch(console.error);
             }
 
-            history.forEach(msg => {
+            for (const msg of history) {
                 if (msg.isDeleted) {
                     renderMessage(cId, msg.id, msg.senderNickname, "", msg.timestamp, {}, msg.replyToMessageId, true);
-                    return;
+                    continue;
                 }
 
                 let aesKey = null;
@@ -1115,7 +1133,7 @@
                     const decryptedBytes = CryptoJS.AES.decrypt(msg.encryptedPayload, aesKey);
                     let originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
                     
-                    if (originalText.startsWith('[WEBRTC_')) return;
+                    if (originalText.startsWith('[WEBRTC_')) continue;
 
                     let isSignatureValid = false;
                     try {
@@ -1135,7 +1153,7 @@
                 } else {
                     addSysLog(cId, `[ŞİFRELİ GEÇMİŞ] Mesaj çözülemedi`, true);
                 }
-            });
+            }
         }
 
         async function clearHistory(cId) {

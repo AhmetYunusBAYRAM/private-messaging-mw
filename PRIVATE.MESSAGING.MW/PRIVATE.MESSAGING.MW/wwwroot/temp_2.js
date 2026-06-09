@@ -71,6 +71,7 @@
                         <button style="width:auto; padding:8px; background:#dc3545; margin:0;" onclick="clearHistory(${id})" title="Sohbeti Sil">🗑️</button>
                         <button style="width:auto; padding:8px 12px; background:#007bff; margin:0;" onclick="startCall(${id})" title="Sesli Ara">📞</button>
                         <button id="blockBtn${id}" class="block-btn" style="width:80px; margin:0;" onclick="toggleBlock(${id})">Engelle</button>
+                        <button style="width:auto; padding:8px; background:#28a745; margin:0;" onclick="verifySecurityCode(${id})" title="Güvenlik Kodunu Doğrula">🔒</button>
                     </div>
                     
                     <div id="presence${id}" style="font-size: 11px; margin-top: -8px; margin-bottom: 8px; color: #888; min-height: 15px;"></div>

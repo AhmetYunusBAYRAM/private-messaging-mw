@@ -18,8 +18,7 @@ public class User
     public string? Otp { get; set; }
     public DateTime? OtpExpiry { get; set; }
 
-    public string? RefreshToken { get; set; }
-    public DateTime? RefreshTokenExpiry { get; set; }
+    public List<RefreshTokenInfo> RefreshTokens { get; set; } = new();
 
     public List<BlockedUserInfo> BlockedUsers { get; set; } = new();
 
