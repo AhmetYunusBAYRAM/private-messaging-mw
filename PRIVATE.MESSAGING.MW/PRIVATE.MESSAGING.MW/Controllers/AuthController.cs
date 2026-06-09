@@ -41,6 +41,7 @@ public class AuthController : ControllerBase
             Email = request.Email,
             Nickname = request.Nickname,
             PublicKey = request.PublicKey,
+            EncryptedPrivateKey = request.EncryptedPrivateKey,
             Otp = otp,
             OtpExpiry = DateTime.UtcNow.AddMinutes(5),
             LastSeen = DateTime.UtcNow
@@ -106,13 +107,6 @@ public class AuthController : ControllerBase
             .Set(u => u.OtpExpiry, null)
             .Set(u => u.LastSeen, DateTime.UtcNow);
 
-        // Update Public Key if provided (e.g. login from new device)
-        if (!string.IsNullOrEmpty(request.PublicKey))
-        {
-            update = update.Set(u => u.PublicKey, request.PublicKey);
-            user.PublicKey = request.PublicKey;
-        }
-
         await _users.UpdateOneAsync(u => u.Id == user.Id, update);
 
         // Generate JWT Token
@@ -138,8 +132,25 @@ public class AuthController : ControllerBase
             message = "Login successful", 
             token = jwtString,
             nickname = user.Nickname, 
-            publicKey = user.PublicKey 
+            publicKey = user.PublicKey,
+            encryptedPrivateKey = user.EncryptedPrivateKey
         });
+    }
+
+    [Authorize]
+    [HttpPost("reset-keys")]
+    public async Task<IActionResult> ResetKeys([FromBody] ResetKeysRequest request)
+    {
+        var email = User.FindFirst(ClaimTypes.Email)?.Value;
+        if (string.IsNullOrEmpty(email)) return Unauthorized();
+
+        var update = Builders<User>.Update
+            .Set(u => u.PublicKey, request.PublicKey)
+            .Set(u => u.EncryptedPrivateKey, request.EncryptedPrivateKey);
+
+        await _users.UpdateOneAsync(u => u.Email == email, update);
+
+        return Ok(new { message = "Keys updated successfully" });
     }
 
     [Authorize]

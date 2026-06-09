@@ -10,7 +10,7 @@
     
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 10px; background: #121212; color: #fff; display: flex; gap: 20px; margin: 0; }
-        .client-box { flex: 1; border: 1px solid #333; padding: 15px; background: #1e1e1e; border-radius: 8px; max-width: 50%; }
+        .client-box { flex: 1; border: 1px solid #333; padding: 15px; background: #1e1e1e; border-radius: 8px; max-width: 50%; position: relative; }
         input[type="text"], input[type="email"], select { padding: 8px; margin: 5px 0; border-radius: 4px; border: 1px solid #444; background: #333; color: white; width: calc(100% - 18px); box-sizing: border-box; }
         button { background: #007bff; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; width: 100%; margin-top:5px; box-sizing: border-box; }
         button:hover { background: #0056b3; }
@@ -56,10 +56,9 @@
         .reply-quote { background: rgba(0,0,0,0.2); border-left: 3px solid #00a884; padding: 6px; border-radius: 4px; font-size: 11px; margin-bottom: 5px; color: #ddd; max-height: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
         .reply-hint { position: absolute; top: 50%; left: -30px; transform: translateY(-50%); opacity: 0; font-size: 20px; transition: opacity 0.2s; }
 
-        .sys-log { align-self: center; background: #182229; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; }
-        .err-log { align-self: center; background: #4a1920; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; }
+        .sys-log { align-self: center; background: #182229; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; margin-top:5px; }
+        .err-log { align-self: center; background: #4a1920; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; margin-top:5px; }
 
-        /* Modern Audio Player Override */
         audio::-webkit-media-controls-panel { background-color: #f1f3f4; border-radius: 8px; }
         audio { filter: drop-shadow(0px 2px 3px rgba(0,0,0,0.3)); }
     </style>
@@ -70,9 +69,21 @@
         const API_BASE = window.location.origin.includes("localhost") && window.location.port !== "" ? window.location.origin : "http://localhost:5032";
         
         const clients = {
-            1: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [], messages: {}, activeReplyId: null, isRecording: false, mediaRecorder: null, audioChunks: [] },
-            2: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [], messages: {}, activeReplyId: null, isRecording: false, mediaRecorder: null, audioChunks: [] }
+            1: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [], messages: {}, activeReplyId: null, isRecording: false, mediaRecorder: null, audioChunks: [], pc: null, localStream: null },
+            2: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [], messages: {}, activeReplyId: null, isRecording: false, mediaRecorder: null, audioChunks: [], pc: null, localStream: null }
         };
+
+        const iceServers = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") 
+            ? { iceServers: [] } // Localhost'ta dış STUN/TURN kullanırsak NAT Hairpinning bloklar, bu yüzden boş bırakıp yerel IP'yi zorluyoruz.
+            : { 
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+                    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+                    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+                ] 
+            };
 
         window.onload = () => {
             checkAutoLogin(1);
@@ -115,7 +126,7 @@
             }
         });
 
-        // --- SWIPE TO REPLY (Touch & Mouse) ---
+        // --- SWIPE TO REPLY ---
         let startX = 0;
         let isDragging = false;
         let currentContainer = null;
@@ -317,7 +328,221 @@
             }
         }
 
-        // --- E2EE CORE PROCESS ---
+        const pubKeyCache = {};
+
+        async function getPublicKey(cId, to) {
+            if (pubKeyCache[to]) return pubKeyCache[to];
+            const c = clients[cId];
+            const res = await fetch(`${API_BASE}/api/auth/publickey/${to}`, {
+                headers: { 'Authorization': `Bearer ${c.token}` }
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            pubKeyCache[to] = data.publicKey;
+            return data.publicKey;
+        }
+
+        // --- DIRECT E2EE SIGNALING MESSENGER ---
+        async function sendDirectE2EEMessage(cId, to, payloadText) {
+            const c = clients[cId];
+            const targetPublicKey = await getPublicKey(cId, to);
+            if (!targetPublicKey) return console.error("Could not fetch target public key");
+
+            const aesKey = CryptoJS.lib.WordArray.random(16).toString();
+            const encryptedPayload = CryptoJS.AES.encrypt(payloadText, aesKey).toString();
+
+            const encryptorReceiver = new JSEncrypt();
+            encryptorReceiver.setPublicKey(targetPublicKey);
+            const receiverSymKey = encryptorReceiver.encrypt(aesKey);
+
+            const myPublicKey = c.rsa.getPublicKey();
+            const encryptorSelf = new JSEncrypt();
+            encryptorSelf.setPublicKey(myPublicKey);
+            const senderSymKey = encryptorSelf.encrypt(aesKey);
+
+            await c.connection.invoke("SendPrivateMessage", to, senderSymKey, receiverSymKey, encryptedPayload, null);
+        }
+
+        // --- WEBRTC VOICE CALLING ---
+        async function initPeerConnection(cId, targetNickname) {
+            const c = clients[cId];
+            if (c.pc) c.pc.close();
+            c.pc = new RTCPeerConnection(iceServers);
+            c.iceQueue = c.iceQueue || [];
+
+            c.pc.onicecandidate = async e => {
+                if (e.candidate) {
+                    addSysLog(cId, `📤 ICE adresi gönderiliyor`);
+                    const payload = `[WEBRTC_ICE]${JSON.stringify(e.candidate)}`;
+                    await sendDirectE2EEMessage(cId, targetNickname, payload);
+                }
+            };
+
+            c.pc.onconnectionstatechange = e => {
+                addSysLog(cId, `⚡ WebRTC Durumu: ${c.pc.connectionState}`);
+                if (c.pc.connectionState === 'connected') {
+                    addSysLog(cId, `🟢 Bağlantı Kuruldu! (Ses Aktarılıyor)`);
+                    const remoteAudio = document.getElementById(`remoteAudio${cId}`);
+                    if (remoteAudio) {
+                        remoteAudio.play().catch(err => console.error("Force play hatası:", err));
+                    }
+                }
+            };
+            c.pc.oniceconnectionstatechange = e => {
+                addSysLog(cId, `🧊 ICE Durumu: ${c.pc.iceConnectionState}`);
+            };
+
+            c.pc.ontrack = e => {
+                addSysLog(cId, `🎵 Ses paketi alındı (Track)`);
+                const remoteAudio = document.getElementById(`remoteAudio${cId}`);
+                if (remoteAudio) {
+                    remoteAudio.srcObject = (e.streams && e.streams[0]) ? e.streams[0] : new MediaStream([e.track]);
+                    remoteAudio.play().catch(err => {
+                        console.error("Ses oynatılamadı:", err);
+                        addSysLog(cId, `❌ Ses oynatılamadı: ${err.message}`, true);
+                    });
+                }
+            };
+
+            try {
+                c.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                c.localStream.getTracks().forEach(track => c.pc.addTrack(track, c.localStream));
+            } catch (err) {
+                alert("Mikrofon izni reddedildi!");
+                throw err;
+            }
+        }
+
+        async function startCall(cId) {
+            const to = document.getElementById(`to${cId}`).value;
+            if (!to) return alert("Arama yapmak için önce sohbet seçin.");
+            const c = clients[cId];
+
+            if (c.blocked.includes(to)) return alert("Engellediğiniz kişiyi arayamazsınız.");
+
+            c.iceQueue = [];
+            showCallModal(cId, `Aranıyor: ${to}...`);
+            await initPeerConnection(cId, to);
+
+            const offer = await c.pc.createOffer();
+            await c.pc.setLocalDescription(offer);
+            
+            const payload = `[WEBRTC_OFFER]${JSON.stringify({ type: offer.type, sdp: offer.sdp })}`;
+            await sendDirectE2EEMessage(cId, to, payload);
+            addSysLog(cId, `📞 ${to} aranıyor...`);
+        }
+
+        async function processIceQueue(cId) {
+            const c = clients[cId];
+            if (c.iceQueue && c.iceQueue.length > 0 && c.pc && c.pc.remoteDescription) {
+                addSysLog(cId, `🔄 ${c.iceQueue.length} adet bekleyen ICE işleniyor...`);
+                for (let cand of c.iceQueue) {
+                    try { 
+                        await c.pc.addIceCandidate(new RTCIceCandidate(cand)); 
+                        addSysLog(cId, `✅ Kuyruktan ICE Eklendi`);
+                    } catch(e){}
+                }
+                c.iceQueue = [];
+            }
+        }
+
+        async function handleWebRTC(cId, from, payload) {
+            const c = clients[cId];
+            c.iceQueue = c.iceQueue || [];
+
+            if (payload.startsWith('[WEBRTC_OFFER]')) {
+                const offerObj = JSON.parse(payload.replace('[WEBRTC_OFFER]', ''));
+                c.pendingCall = { from, offer: offerObj };
+                document.getElementById(`incomingCallText${cId}`).innerText = `📞 ${from} sesli arıyor...`;
+                document.getElementById(`incomingCallModal${cId}`).style.display = 'block';
+                addSysLog(cId, `📞 ${from} arıyor...`);
+            } 
+            else if (payload.startsWith('[WEBRTC_ANSWER]')) {
+                const answerObj = JSON.parse(payload.replace('[WEBRTC_ANSWER]', ''));
+                if (c.pc) {
+                    await c.pc.setRemoteDescription(new RTCSessionDescription(answerObj));
+                    document.getElementById(`callModalText${cId}`).innerText = `Konuşuluyor: ${from}`;
+                    await processIceQueue(cId);
+                }
+            } 
+            else if (payload.startsWith('[WEBRTC_ICE]')) {
+                const candidateObj = JSON.parse(payload.replace('[WEBRTC_ICE]', ''));
+                if (c.pc && c.pc.remoteDescription) {
+                    try { 
+                        await c.pc.addIceCandidate(new RTCIceCandidate(candidateObj)); 
+                        addSysLog(cId, `✅ ICE Eklendi`);
+                    } catch(e){
+                        addSysLog(cId, `❌ ICE Hatası: ${e.message}`, true);
+                    }
+                } else {
+                    addSysLog(cId, `⏳ ICE Bekletiliyor`);
+                    c.iceQueue.push(candidateObj);
+                }
+            }
+        }
+
+        async function answerCall(cId) {
+            const c = clients[cId];
+            document.getElementById(`incomingCallModal${cId}`).style.display = 'none';
+            if (!c.pendingCall) return;
+
+            const from = c.pendingCall.from;
+            const offerObj = c.pendingCall.offer;
+            
+            showCallModal(cId, `Konuşuluyor: ${from}`);
+            await initPeerConnection(cId, from);
+            
+            await c.pc.setRemoteDescription(new RTCSessionDescription(offerObj));
+            const answer = await c.pc.createAnswer();
+            await c.pc.setLocalDescription(answer);
+
+            const payloadAns = `[WEBRTC_ANSWER]${JSON.stringify({ type: answer.type, sdp: answer.sdp })}`;
+            await sendDirectE2EEMessage(cId, from, payloadAns);
+            
+            await processIceQueue(cId);
+            addSysLog(cId, `📞 ${from} ile çağrı başladı.`);
+            c.pendingCall = null;
+        }
+
+        function rejectCall(cId) {
+            document.getElementById(`incomingCallModal${cId}`).style.display = 'none';
+            clients[cId].pendingCall = null;
+            clients[cId].iceQueue = [];
+        }
+
+        function toggleMute(cId) {
+            const c = clients[cId];
+            if (c.localStream) {
+                const audioTrack = c.localStream.getAudioTracks()[0];
+                if (audioTrack) {
+                    audioTrack.enabled = !audioTrack.enabled;
+                    const btn = document.getElementById(`muteBtn${cId}`);
+                    btn.innerText = audioTrack.enabled ? "🔇 Sustur" : "🔊 Sesi Aç";
+                    btn.style.background = audioTrack.enabled ? "#ffc107" : "#28a745";
+                }
+            }
+        }
+
+        function showCallModal(cId, text) {
+            const modal = document.getElementById(`callModal${cId}`);
+            document.getElementById(`callModalText${cId}`).innerText = text;
+            modal.style.display = 'block';
+            const btn = document.getElementById(`muteBtn${cId}`);
+            if (btn) {
+                btn.innerText = "🔇 Sustur";
+                btn.style.background = "#ffc107";
+            }
+        }
+
+        function endCall(cId) {
+            const c = clients[cId];
+            if (c.pc) { c.pc.close(); c.pc = null; }
+            if (c.localStream) { c.localStream.getTracks().forEach(t => t.stop()); c.localStream = null; }
+            document.getElementById(`callModal${cId}`).style.display = 'none';
+            addSysLog(cId, `📞 Çağrı sonlandırıldı.`);
+        }
+
+        // --- NORMAL MESSAGING PROCESS ---
         async function processAndSendMessage(cId, payloadText) {
             const c = clients[cId];
             const to = document.getElementById(`to${cId}`).value;
@@ -327,12 +552,8 @@
                 return alert("Bu kullanıcıyı engellediniz. Mesaj göndermek için engeli kaldırın.");
             }
 
-            const res = await fetch(`${API_BASE}/api/auth/publickey/${to}`, {
-                headers: { 'Authorization': `Bearer ${c.token}` }
-            });
-            if (!res.ok) return alert(`Alıcı (${to}) bulunamadı!`);
-            const data = await res.json();
-            const targetPublicKey = data.publicKey;
+            const targetPublicKey = await getPublicKey(cId, to);
+            if (!targetPublicKey) return alert(`Alıcı (${to}) bulunamadı!`);
 
             const aesKey = CryptoJS.lib.WordArray.random(16).toString();
             const encryptedPayload = CryptoJS.AES.encrypt(payloadText, aesKey).toString();
@@ -402,7 +623,6 @@
             reader.readAsDataURL(file);
         }
 
-        // --- AUDIO RECORDING ---
         async function toggleRecording(cId) {
             const c = clients[cId];
             const btn = document.getElementById(`micBtn${cId}`);
@@ -490,7 +710,24 @@
             clients[cId].email = email;
 
             let endpoint = action === 'register' ? '/api/auth/register' : '/api/auth/login';
-            let body = action === 'register' ? { email, nickname, publicKey: "temp" } : { email };
+            let body = {};
+
+            if (action === 'register') {
+                const pin = prompt("Eski mesajlarınızı cihaz değiştirince kurtarabilmek için bir Kurtarma Parolası (PIN) belirleyin:");
+                if (!pin) return alert("Parola zorunludur!");
+                
+                const c = clients[cId];
+                c.rsa.getKey();
+                const publicKey = c.rsa.getPublicKey();
+                const privateKey = c.rsa.getPrivateKey();
+                
+                const encryptedPrivateKey = CryptoJS.AES.encrypt(privateKey, pin).toString();
+                localStorage.setItem(`rsa_private_${email}`, privateKey);
+                
+                body = { email, nickname, publicKey, encryptedPrivateKey };
+            } else {
+                body = { email };
+            }
 
             const res = await fetch(`${API_BASE}${endpoint}`, {
                 method: 'POST',
@@ -507,24 +744,67 @@
             const otp = document.getElementById(`otp${cId}`).value;
             const c = clients[cId];
 
-            let savedPrivateKey = localStorage.getItem(`rsa_private_${email}`);
-            if (!savedPrivateKey) {
-                c.rsa.getKey();
-                localStorage.setItem(`rsa_private_${email}`, c.rsa.getPrivateKey());
-            } else {
-                c.rsa.setPrivateKey(savedPrivateKey);
-            }
-            const publicKey = c.rsa.getPublicKey();
-
             const res = await fetch(`${API_BASE}/api/auth/verify-otp`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, otp, publicKey })
+                body: JSON.stringify({ email, otp })
             });
 
             if (!res.ok) return alert("Geçersiz OTP!");
 
             const data = await res.json();
+            
+            let savedPrivateKey = localStorage.getItem(`rsa_private_${email}`);
+            
+            if (!savedPrivateKey) {
+                if (!data.encryptedPrivateKey) {
+                    alert("Sunucuda yedeklenmiş bir anahtar bulunamadı. Lütfen önce kayıt olun.");
+                    return;
+                }
+                
+                const pin = prompt("Eski mesajlarınızı kurtarmak için Kurtarma Parolanızı girin (Unuttuysanız 'iptal' deyin):");
+                if (pin) {
+                    try {
+                        const decryptedBytes = CryptoJS.AES.decrypt(data.encryptedPrivateKey, pin);
+                        const decryptedKey = decryptedBytes.toString(CryptoJS.enc.Utf8);
+                        if (!decryptedKey || !decryptedKey.includes('RSA PRIVATE KEY')) throw new Error("Yanlış parola");
+                        
+                        savedPrivateKey = decryptedKey;
+                        c.rsa.setPrivateKey(savedPrivateKey);
+                        localStorage.setItem(`rsa_private_${email}`, savedPrivateKey);
+                        alert("Anahtarlarınız kurtarıldı! Eski mesajlarınızı artık okuyabilirsiniz.");
+                    } catch(e) {
+                        alert("Parola yanlış! Lütfen tekrar giriş yapın.");
+                        return;
+                    }
+                } else {
+                    if (confirm("Parolayı girmediniz. Yeni şifreleme anahtarı üretilecek ve ESKİ MESAJLARINIZ SİLİNECEK! Onaylıyor musunuz?")) {
+                        const newPin = prompt("Yeni bir kurtarma parolası belirleyin:");
+                        if (!newPin) return alert("İşlem iptal edildi.");
+                        
+                        c.rsa.getKey();
+                        savedPrivateKey = c.rsa.getPrivateKey();
+                        const newPublicKey = c.rsa.getPublicKey();
+                        const newEncryptedPrivateKey = CryptoJS.AES.encrypt(savedPrivateKey, newPin).toString();
+                        
+                        localStorage.setItem(`rsa_private_${email}`, savedPrivateKey);
+                        c.rsa.setPrivateKey(savedPrivateKey);
+                        
+                        const resetRes = await fetch(`${API_BASE}/api/auth/reset-keys`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${data.token}` },
+                            body: JSON.stringify({ publicKey: newPublicKey, encryptedPrivateKey: newEncryptedPrivateKey })
+                        });
+                        if (!resetRes.ok) return alert("Anahtar sıfırlama başarısız oldu.");
+                        alert("Anahtarlarınız sıfırlandı. Yeni mesajlar için güvenliğiniz sağlandı.");
+                    } else {
+                        return;
+                    }
+                }
+            } else {
+                c.rsa.setPrivateKey(savedPrivateKey);
+            }
+
             c.token = data.token;
             c.nickname = data.nickname;
 
@@ -558,6 +838,14 @@
                 const decryptedBytes = CryptoJS.AES.decrypt(encryptedPayload, aesKey);
                 const originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
                 
+                // ROUTE WEBRTC PAYLOADS
+                if (originalText.startsWith('[WEBRTC_')) {
+                    if (from !== c.nickname) {
+                        handleWebRTC(cId, from, originalText);
+                    }
+                    return; // Do not render signaling in chat
+                }
+
                 if (document.getElementById(`to${cId}`).value === from) {
                     renderMessage(cId, msgId, from, originalText, new Date().toISOString(), {}, replyToId, false);
                 }
@@ -671,6 +959,7 @@
                         snippet = decryptedBytes.toString(CryptoJS.enc.Utf8);
                         if (snippet.startsWith('[IMAGE]')) snippet = "📷 Fotoğraf";
                         else if (snippet.startsWith('[AUDIO]')) snippet = "🎤 Sesli Mesaj";
+                        else if (snippet.startsWith('[WEBRTC_')) snippet = "📞 Sesli Çağrı";
                     }
                 }
 
@@ -723,6 +1012,9 @@
                 if (aesKey) {
                     const decryptedBytes = CryptoJS.AES.decrypt(msg.encryptedPayload, aesKey);
                     const originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
+                    
+                    // Do not render signaling commands in history chat logs
+                    if (originalText.startsWith('[WEBRTC_')) return;
                     
                     renderMessage(cId, msg.id, msg.senderNickname, originalText, msg.timestamp, msg.reactions || {}, msg.replyToMessageId, false);
                 } else {
@@ -818,6 +1110,23 @@
             <div class="client-box" id="clientBox${id}">
                 <h2>Kullanıcı ${id} <button class="logout-btn" onclick="logout(${id})">Çıkış Yap</button></h2>
                 
+                <!-- INCOMING CALL MODAL -->
+                <div id="incomingCallModal${id}" style="display:none; position:absolute; top:20px; left:50%; transform:translateX(-50%); background:#28a745; color:white; padding:15px; border-radius:8px; z-index:1001; box-shadow:0 4px 10px rgba(0,0,0,0.5); text-align:center;">
+                    <div id="incomingCallText${id}" style="margin-bottom:10px; font-weight:bold;">Arama Geliyor...</div>
+                    <button style="background:#007bff; padding:5px 15px; font-size:12px; width:auto; border-radius:20px; margin-right:5px;" onclick="answerCall(${id})">Cevapla</button>
+                    <button style="background:#dc3545; padding:5px 15px; font-size:12px; width:auto; border-radius:20px;" onclick="rejectCall(${id})">Reddet</button>
+                </div>
+
+                <!-- ACTIVE CALL MODAL -->
+                <div id="callModal${id}" style="display:none; position:absolute; top:20px; left:50%; transform:translateX(-50%); background:#005c4b; color:white; padding:15px; border-radius:8px; z-index:1000; box-shadow:0 4px 10px rgba(0,0,0,0.5); text-align:center; min-width: 250px;">
+                    <div id="callModalText${id}" style="margin-bottom:10px; font-weight:bold;">Arama Sürüyor...</div>
+                    <audio id="remoteAudio${id}" autoplay controls style="width: 100%; height: 40px; margin-bottom: 10px;"></audio>
+                    <div class="row" style="justify-content:center;">
+                        <button id="muteBtn${id}" style="background:#ffc107; color:black; padding:5px 15px; font-size:12px; width:auto; border-radius:20px;" onclick="toggleMute(${id})">🔇 Sustur</button>
+                        <button style="background:#dc3545; padding:5px 15px; font-size:12px; width:auto; border-radius:20px;" onclick="endCall(${id})">Kapat</button>
+                    </div>
+                </div>
+
                 <!-- AUTH SECTION -->
                 <div id="auth${id}">
                     <h4>1. Giriş / Kayıt</h4>
@@ -862,6 +1171,7 @@
                     <h4>Sohbet Penceresi</h4>
                     <div class="row">
                         <input type="text" id="to${id}" placeholder="Kiminle Konuşulacak? (Nickname)" readonly style="background:#222; color:#888;">
+                        <button style="width:auto; padding:8px 12px; background:#007bff; margin:0;" onclick="startCall(${id})" title="Sesli Ara">📞</button>
                         <button id="blockBtn${id}" class="block-btn" style="width:100px; margin:0;" onclick="toggleBlock(${id})">Engelle</button>
                     </div>
                     
@@ -877,7 +1187,7 @@
                         <label for="imgUpload${id}" style="cursor:pointer; background:#28a745; border-radius:4px; padding:8px 12px; margin:5px 0; display:flex; align-items:center; justify-content:center; box-sizing:border-box;" title="Resim Ekle">📎</label>
                         <input type="file" id="imgUpload${id}" accept="image/*" style="display:none;" onchange="sendImage(${id}, this)">
                         
-                        <button id="micBtn${id}" style="width:auto; padding:8px 12px; background:#17a2b8; margin:5px 0;" onclick="toggleRecording(${id})" title="Sesli Mesaj">🎙️</button>
+                        <button id="micBtn${id}" style="width:auto; padding:8px 12px; background:#17a2b8; margin:5px 0;" onclick="toggleRecording(${id})" title="Sesli Mesaj (Kaydet & Gönder)">🎙️</button>
                         
                         <input type="text" id="msg${id}" placeholder="Gizli Mesajınız..." style="flex:1;">
                         <button style="width:70px; margin:0;" onclick="sendMessage(${id})">Gönder</button>

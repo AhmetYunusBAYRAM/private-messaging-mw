@@ -1,9 +1,7 @@
 namespace PRIVATE.MESSAGING.MW.Models.Requests;
 
-public class RegisterRequest
+public class ResetKeysRequest
 {
-    public string Email { get; set; } = string.Empty;
-    public string Nickname { get; set; } = string.Empty;
     public string PublicKey { get; set; } = string.Empty;
     public string EncryptedPrivateKey { get; set; } = string.Empty;
 }
