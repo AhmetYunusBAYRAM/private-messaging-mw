@@ -58,6 +58,10 @@
 
         .sys-log { align-self: center; background: #182229; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; }
         .err-log { align-self: center; background: #4a1920; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; }
+
+        /* Modern Audio Player Override */
+        audio::-webkit-media-controls-panel { background-color: #f1f3f4; border-radius: 8px; }
+        audio { filter: drop-shadow(0px 2px 3px rgba(0,0,0,0.3)); }
     </style>
 </head>
 <body>
@@ -66,8 +70,8 @@
         const API_BASE = window.location.origin.includes("localhost") && window.location.port !== "" ? window.location.origin : "http://localhost:5032";
         
         const clients = {
-            1: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [], messages: {}, activeReplyId: null },
-            2: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [], messages: {}, activeReplyId: null }
+            1: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [], messages: {}, activeReplyId: null, isRecording: false, mediaRecorder: null, audioChunks: [] },
+            2: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [], messages: {}, activeReplyId: null, isRecording: false, mediaRecorder: null, audioChunks: [] }
         };
 
         window.onload = () => {
@@ -167,6 +171,8 @@
             
             if (txt.startsWith('[IMAGE]')) {
                 previewText.innerText = "📷 Fotoğraf";
+            } else if (txt.startsWith('[AUDIO]')) {
+                previewText.innerText = "🎤 Sesli Mesaj";
             } else if (txt.startsWith('[DELETED]')) {
                 previewText.innerText = "🚫 Silinmiş mesaj";
             } else {
@@ -217,6 +223,8 @@
                 
                 if (repliedText.startsWith('[IMAGE]')) {
                     repliedText = "📷 Fotoğraf";
+                } else if (repliedText.startsWith('[AUDIO]')) {
+                    repliedText = "🎤 Sesli Mesaj";
                 } else if (repliedText.startsWith('[DELETED]')) {
                     repliedText = "🚫 Silinmiş mesaj";
                 } else if (repliedText.length > 60) {
@@ -231,6 +239,9 @@
             } else if (text.startsWith('[IMAGE]')) {
                 const base64Str = text.replace('[IMAGE]', '');
                 renderedText = `<img src="${base64Str}" style="max-width:200px; border-radius:8px; cursor:pointer;" onclick="enlargeImage(this.src)">`;
+            } else if (text.startsWith('[AUDIO]')) {
+                const base64Str = text.replace('[AUDIO]', '');
+                renderedText = `<audio controls src="${base64Str}" style="max-width: 250px; height: 40px; outline: none;"></audio>`;
             } else {
                 renderedText = `<div>${text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`;
             }
@@ -389,6 +400,51 @@
             reader.readAsDataURL(file);
         }
 
+        // --- AUDIO RECORDING ---
+        async function toggleRecording(cId) {
+            const c = clients[cId];
+            const btn = document.getElementById(`micBtn${cId}`);
+            
+            if (!c.isRecording) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    c.mediaRecorder = new MediaRecorder(stream);
+                    c.audioChunks = [];
+                    
+                    c.mediaRecorder.ondataavailable = e => {
+                        if (e.data.size > 0) c.audioChunks.push(e.data);
+                    };
+                    
+                    c.mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(c.audioChunks, { type: 'audio/webm' });
+                        const reader = new FileReader();
+                        reader.onload = async function() {
+                            const base64Data = reader.result;
+                            const finalPayload = `[AUDIO]${base64Data}`;
+                            await processAndSendMessage(cId, finalPayload);
+                        };
+                        reader.readAsDataURL(audioBlob);
+                        
+                        stream.getTracks().forEach(track => track.stop());
+                    };
+                    
+                    c.mediaRecorder.start();
+                    c.isRecording = true;
+                    btn.innerText = "⏹️";
+                    btn.style.background = "#dc3545"; 
+                } catch (err) {
+                    alert("Mikrofon izni alınamadı: " + err.message);
+                }
+            } else {
+                if (c.mediaRecorder && c.mediaRecorder.state !== 'inactive') {
+                    c.mediaRecorder.stop();
+                }
+                c.isRecording = false;
+                btn.innerText = "🎙️";
+                btn.style.background = "#17a2b8";
+            }
+        }
+
         // --- AUTH & SIGNALR BOOTSTRAP ---
         async function checkAutoLogin(cId) {
             const token = localStorage.getItem(`token${cId}`);
@@ -513,7 +569,7 @@
 
             c.connection.on("MessageDeleted", (msgId) => {
                 const box = document.getElementById(`msgBox_${cId}_${msgId}`);
-                if (box) loadHistory(cId); // UI'ı yenileyerek silindi mesajını göster
+                if (box) loadHistory(cId);
                 loadInbox(cId);
             });
 
@@ -610,6 +666,7 @@
                         const decryptedBytes = CryptoJS.AES.decrypt(msg.encryptedPayload, aesKey);
                         snippet = decryptedBytes.toString(CryptoJS.enc.Utf8);
                         if (snippet.startsWith('[IMAGE]')) snippet = "📷 Fotoğraf";
+                        else if (snippet.startsWith('[AUDIO]')) snippet = "🎤 Sesli Mesaj";
                     }
                 }
 
@@ -813,8 +870,11 @@
                     </div>
 
                     <div class="row" style="align-items:center;">
-                        <label for="imgUpload${id}" style="cursor:pointer; background:#28a745; border-radius:4px; padding:8px 12px; margin:5px 0; display:flex; align-items:center; justify-content:center; box-sizing:border-box;">📎</label>
+                        <label for="imgUpload${id}" style="cursor:pointer; background:#28a745; border-radius:4px; padding:8px 12px; margin:5px 0; display:flex; align-items:center; justify-content:center; box-sizing:border-box;" title="Resim Ekle">📎</label>
                         <input type="file" id="imgUpload${id}" accept="image/*" style="display:none;" onchange="sendImage(${id}, this)">
+                        
+                        <button id="micBtn${id}" style="width:auto; padding:8px 12px; background:#17a2b8; margin:5px 0;" onclick="toggleRecording(${id})" title="Sesli Mesaj">🎙️</button>
+                        
                         <input type="text" id="msg${id}" placeholder="Gizli Mesajınız..." style="flex:1;">
                         <button style="width:70px; margin:0;" onclick="sendMessage(${id})">Gönder</button>
                     </div>
