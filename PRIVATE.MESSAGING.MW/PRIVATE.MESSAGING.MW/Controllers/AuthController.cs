@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PRIVATE.MESSAGING.DTOs.Requests;
 using PRIVATE.MESSAGING.Core.Interfaces;
+using PRIVATE.MESSAGING.MW.Filters;
 using System.Security.Claims;
 
 namespace PRIVATE.MESSAGING.MW.Controllers;
@@ -17,15 +18,17 @@ public class AuthController : ControllerBase
         _authService = authService;
     }
 
+    [OtpRateLimit(maxRequests: 3, windowSeconds: 60)]
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
         var result = await _authService.RegisterAsync(request.Email, request.Nickname, request.PublicKey, request.EncryptedPrivateKey);
         if (!result.Success) return BadRequest(new { message = result.Message });
-        
+
         return Ok(new { message = result.Message });
     }
 
+    [OtpRateLimit(maxRequests: 5, windowSeconds: 60)]
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
@@ -35,16 +38,18 @@ public class AuthController : ControllerBase
         return Ok(new { message = result.Message });
     }
 
+    [OtpRateLimit(maxRequests: 5, windowSeconds: 60)]
     [HttpPost("verify-otp")]
     public async Task<IActionResult> VerifyOtp([FromBody] VerifyOtpRequest request)
     {
         var result = await _authService.VerifyOtpAsync(request.Email, request.Otp);
         if (!result.Success) return BadRequest(new { message = result.Message });
 
-        return Ok(new { 
-            token = result.Token, 
-            nickname = result.Nickname, 
-            encryptedPrivateKey = result.EncryptedPrivateKey 
+        return Ok(new
+        {
+            token = result.Token,
+            nickname = result.Nickname,
+            encryptedPrivateKey = result.EncryptedPrivateKey
         });
     }
 

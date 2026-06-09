@@ -729,7 +729,7 @@
                 if (!pin) return alert("Parola zorunludur!");
                 
                 const c = clients[cId];
-                c.rsa.getKey();
+                c.rsa.getKey(2048);
                 const publicKey = c.rsa.getPublicKey();
                 const privateKey = c.rsa.getPrivateKey();
                 
@@ -794,7 +794,7 @@
                         const newPin = prompt("Yeni bir kurtarma parolası belirleyin:");
                         if (!newPin) return alert("İşlem iptal edildi.");
                         
-                        c.rsa.getKey();
+                        c.rsa.getKey(2048);
                         savedPrivateKey = c.rsa.getPrivateKey();
                         const newPublicKey = c.rsa.getPublicKey();
                         const newEncryptedPrivateKey = CryptoJS.AES.encrypt(savedPrivateKey, newPin).toString();
