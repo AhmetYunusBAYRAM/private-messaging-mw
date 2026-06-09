@@ -598,7 +598,15 @@
             if (!file) return;
             
             const reader = new FileReader();
-            reader.onload = function(e) {
+            reader.onload = async function(e) {
+                if (file.type === 'image/gif') {
+                    // Skip canvas processing for GIFs to preserve animation
+                    const dataUrl = e.target.result;
+                    const finalPayload = `[IMAGE]${dataUrl}`;
+                    input.value = "";
+                    await processAndSendMessage(cId, finalPayload);
+                    return;
+                }
                 const img = new Image();
                 img.onload = async function() {
                     const canvas = document.createElement('canvas');
