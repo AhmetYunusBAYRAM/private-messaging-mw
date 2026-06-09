@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stealth Chat - WhatsApp Benzeri E2EE Client</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsencrypt/3.3.2/jsencrypt.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsencrypt/3.3.2/jsencrypt.min.js">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js">
     
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 10px; background: #121212; color: #fff; display: flex; gap: 20px; margin: 0; }
@@ -65,7 +65,7 @@
 </head>
 <body>
 
-    <script>
+    
         const API_BASE = window.location.origin.includes("localhost") && window.location.port !== "" ? window.location.origin : "http://localhost:5032";
         
         const clients = {
@@ -777,33 +777,15 @@
                 const pin = prompt("Eski mesajlarınızı cihaz değiştirince kurtarabilmek için bir Kurtarma Parolası (PIN) belirleyin:");
                 if (!pin) return alert("Parola zorunludur!");
                 
-                alert("Güvenliğiniz için uçtan uca şifreleme anahtarları oluşturuluyor. Lütfen 3-5 saniye bekleyin...");
-
-                setTimeout(async () => {
-                    try {
-                        const c = clients[cId];
-                        c.rsa.getKey();
-                        const publicKey = c.rsa.getPublicKey();
-                        const privateKey = c.rsa.getPrivateKey();
-                        
-                        const encryptedPrivateKey = CryptoJS.AES.encrypt(privateKey, pin).toString();
-                        localStorage.setItem(`rsa_private_${email}`, privateKey);
-                        
-                        body = { email, nickname, publicKey, encryptedPrivateKey };
-
-                        const res = await fetch(`${API_BASE}${endpoint}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body)
-                        });
-
-                        if (res.ok) alert(`OTP gönderildi (Terminal ekranına bakınız).`);
-                        else { const data = await res.json(); alert(`Hata: ${data.message}`); }
-                    } catch (e) {
-                        alert("Kayıt sırasında bir hata oluştu: " + e.message);
-                    }
-                }, 100);
-                return;
+                const c = clients[cId];
+                c.rsa.getKey();
+                const publicKey = c.rsa.getPublicKey();
+                const privateKey = c.rsa.getPrivateKey();
+                
+                const encryptedPrivateKey = CryptoJS.AES.encrypt(privateKey, pin).toString();
+                localStorage.setItem(`rsa_private_${email}`, privateKey);
+                
+                body = { email, nickname, publicKey, encryptedPrivateKey };
             } else {
                 body = { email };
             }
@@ -1092,7 +1074,7 @@
             const inboxContainer = document.getElementById(`inboxList${cId}`);
             const fragment = document.createDocumentFragment();
 
-            for (const item of inboxData) {
+            inboxData.forEach(item => {
                 const msg = item.lastMessage;
                 let snippet = "[Şifreli Mesaj]";
 
@@ -1148,7 +1130,7 @@
                     </div>
                 `;
                 fragment.appendChild(div);
-            }
+            });
             
             inboxContainer.innerHTML = '';
             inboxContainer.appendChild(fragment);
@@ -1182,10 +1164,10 @@
                 c.connection.invoke("MarkMessagesAsRead", target).catch(console.error);
             }
 
-            for (const msg of history) {
+            history.forEach(msg => {
                 if (msg.isDeleted) {
                     renderMessage(cId, msg.id, msg.senderNickname, "", msg.timestamp, {}, msg.replyToMessageId, true);
-                    continue;
+                    return;
                 }
 
                 let aesKey = null;
@@ -1200,7 +1182,7 @@
                     const decryptedBytes = CryptoJS.AES.decrypt(msg.encryptedPayload, aesKey);
                     let originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
                     
-                    if (originalText.startsWith('[WEBRTC_')) continue;
+                    if (originalText.startsWith('[WEBRTC_')) return;
 
                     let isSignatureValid = false;
                     try {
@@ -1220,7 +1202,7 @@
                 } else {
                     addSysLog(cId, `[ŞİFRELİ GEÇMİŞ] Mesaj çözülemedi`, true);
                 }
-            }
+            });
         }
 
         async function clearHistory(cId) {
@@ -1323,7 +1305,7 @@
                 btn.style.background = "#dc3545";
             }
         }
-    </script>
+    
 
     <!-- Modal for enlarging images -->
     <div id="imageModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:9999; justify-content:center; align-items:center;" onclick="this.style.display='none'">
@@ -1339,7 +1321,7 @@
         </div>
     </div>
 
-    <script>
+    
         async function showSessions(cId) {
             document.getElementById('sessionsModal').style.display = 'flex';
             const list = document.getElementById('sessionsList');
@@ -1386,10 +1368,10 @@
                 el.innerHTML = `Son Görülme: ${dt}`;
             }
         }
-    </script>
+    
 
     <!-- UI GENERATOR -->
-    <script>
+    
         function createClientUI(id) {
             document.write(`
             <div class="client-box" id="clientBox${id}">
@@ -1487,12 +1469,12 @@
             </div>
             `);
         }
-    </script>
+    
 
     <!-- RENDER -->
-    <script>
+    
         createClientUI(1);
         createClientUI(2);
-    </script>
+    
 </body>
 </html>

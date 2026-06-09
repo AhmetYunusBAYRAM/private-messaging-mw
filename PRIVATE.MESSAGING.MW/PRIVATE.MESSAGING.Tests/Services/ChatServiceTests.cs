@@ -19,21 +19,24 @@ public class ChatServiceTests
     {
         var service = CreateChatService(new List<User>(), new List<Core.Entities.ChatMessage>());
 
-        service.UserConnected("alice", "conn-123");
+        service.UserConnected("alice", "dev-1", "conn-123", "ephemeral-key");
 
-        Assert.Equal("conn-123", service.GetConnectionId("alice"));
+        var details = service.GetActiveConnections("alice");
+        Assert.True(details.ContainsKey("dev-1"));
+        Assert.Equal("conn-123", details["dev-1"].ConnectionId);
+        Assert.Equal("ephemeral-key", details["dev-1"].EphemeralPublicKey);
     }
 
     [Fact]
     public void UserDisconnected_RemovesConnectionId()
     {
         var service = CreateChatService(new List<User>(), new List<Core.Entities.ChatMessage>());
-        service.UserConnected("alice", "conn-123");
+        service.UserConnected("alice", "dev-1", "conn-123", "ephemeral-key");
 
-        var removed = service.UserDisconnected("alice");
+        var removed = service.UserDisconnected("alice", "dev-1");
 
         Assert.True(removed);
-        Assert.Null(service.GetConnectionId("alice"));
+        Assert.False(service.GetActiveConnections("alice").ContainsKey("dev-1"));
     }
 
     [Fact]
@@ -41,19 +44,19 @@ public class ChatServiceTests
     {
         var service = CreateChatService(new List<User>(), new List<Core.Entities.ChatMessage>());
 
-        var removed = service.UserDisconnected("ghost");
+        var removed = service.UserDisconnected("ghost", "dev-1");
 
         Assert.False(removed);
     }
 
     [Fact]
-    public void GetConnectionId_WhenNotConnected_ReturnsNull()
+    public void GetActiveConnections_WhenNotConnected_ReturnsEmpty()
     {
         var service = CreateChatService(new List<User>(), new List<Core.Entities.ChatMessage>());
 
-        var result = service.GetConnectionId("nobody");
+        var result = service.GetActiveConnections("nobody");
 
-        Assert.Null(result);
+        Assert.Empty(result);
     }
 
     [Fact]
@@ -72,7 +75,7 @@ public class ChatServiceTests
         var service = CreateChatService(new List<User> { sender, receiver }, new List<Core.Entities.ChatMessage>());
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await service.SendPrivateMessageAsync("alice", "bob", "sk", "rk", "payload", null));
+            await service.SendPrivateMessageAsync("alice", "bob", "sk", new Dictionary<string, string>(), "sig", "payload", null));
     }
 
     [Fact]
@@ -91,7 +94,7 @@ public class ChatServiceTests
         var service = CreateChatService(new List<User> { sender, receiver }, new List<Core.Entities.ChatMessage>());
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await service.SendPrivateMessageAsync("alice", "bob", "sk", "rk", "payload", null));
+            await service.SendPrivateMessageAsync("alice", "bob", "sk", new Dictionary<string, string>(), "sig", "payload", null));
     }
 
     [Fact]
@@ -102,7 +105,7 @@ public class ChatServiceTests
         var service = CreateChatService(new List<User> { sender }, new List<Core.Entities.ChatMessage>());
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await service.SendPrivateMessageAsync("alice", "ghost", "sk", "rk", "payload", null));
+            await service.SendPrivateMessageAsync("alice", "ghost", "sk", new Dictionary<string, string>(), "sig", "payload", null));
     }
 
     [Fact]

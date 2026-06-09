@@ -76,7 +76,7 @@ builder.Services.AddControllers();
 builder.Services.AddSignalR(options =>
 {
     options.MaximumReceiveMessageSize = 10 * 1024 * 1024;
-});
+}).AddStackExchangeRedis(builder.Configuration.GetSection("RedisCacheOptions:Configuration").Value ?? "localhost:6379");
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 

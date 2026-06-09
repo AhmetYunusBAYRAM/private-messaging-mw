@@ -1,71 +1,4 @@
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stealth Chat - WhatsApp Benzeri E2EE Client</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsencrypt/3.3.2/jsencrypt.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-    
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 10px; background: #121212; color: #fff; display: flex; gap: 20px; margin: 0; }
-        .client-box { flex: 1; border: 1px solid #333; padding: 15px; background: #1e1e1e; border-radius: 8px; max-width: 50%; position: relative; }
-        input[type="text"], input[type="email"], select { padding: 8px; margin: 5px 0; border-radius: 4px; border: 1px solid #444; background: #333; color: white; width: calc(100% - 18px); box-sizing: border-box; }
-        button { background: #007bff; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; width: 100%; margin-top:5px; box-sizing: border-box; }
-        button:hover { background: #0056b3; }
-        .logs { height: 350px; overflow-y: scroll; border: 1px solid #444; padding: 10px; background: #0b141a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; margin-top: 5px; margin-bottom: 5px; display: flex; flex-direction: column; gap: 8px; position: relative;}
-        h2, h3, h4 { border-bottom: 1px solid #444; padding-bottom: 5px; margin-top: 0; margin-bottom:10px; }
-        .row { display: flex; gap: 10px; }
-        .row input[type="text"], .row select { flex: 1; }
-        .inbox-list { border: 1px solid #444; height: 120px; overflow-y: scroll; background: #000; padding: 5px; margin-bottom: 10px; }
-        .inbox-item { display: flex; align-items: center; gap: 10px; padding: 5px; border-bottom: 1px solid #222; cursor: pointer; }
-        .inbox-item:hover { background: #111; }
-        .inbox-item img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background:#333; }
-        .inbox-details { display: flex; flex-direction: column; }
-        .inbox-name { font-weight: bold; font-size: 14px; }
-        .inbox-msg { font-size: 12px; color: #aaa; }
-        .profile-header { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; }
-        .profile-header img { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 2px solid #007bff; }
-        .logout-btn { background: #dc3545; width: auto; font-size:10px; padding:3px 10px; float:right; }
-        .block-btn { background: #dc3545; margin: 0; }
-        .block-btn:hover { background: #c82333; }
-        .blocked-user { color: #ff6b6b; font-size: 13px; padding: 5px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center;}
-        
-        /* Message Bubbles */
-        .msg-container { display: flex; flex-direction: column; max-width: 75%; position: relative; margin-bottom: 12px; transition: transform 0.2s; }
-        .msg-out { align-self: flex-end; }
-        .msg-in { align-self: flex-start; }
-        .msg-bubble { padding: 8px 12px; border-radius: 8px; position: relative; word-wrap: break-word; -webkit-touch-callout: none; user-select: none; }
-        .msg-out .msg-bubble { background: #005c4b; color: white; border-bottom-right-radius: 0; }
-        .msg-in .msg-bubble { background: #202c33; color: white; border-bottom-left-radius: 0; }
-        .msg-time { font-size: 10px; color: #8696a0; text-align: right; margin-top: 4px; display: block; }
-        
-        /* Reactions */
-        .reaction-badge { position: absolute; bottom: -14px; background: #1e2a30; border: 1px solid #2a3942; border-radius: 12px; padding: 2px 6px; font-size: 12px; display: flex; gap: 2px; cursor: pointer; z-index: 2; }
-        .msg-out .reaction-badge { right: 5px; }
-        .msg-in .reaction-badge { left: 5px; }
-        
-        .reaction-menu { position: absolute; bottom: 100%; right: 0; background: #233138; border-radius: 20px; padding: 5px 15px; display: none; gap: 8px; z-index: 10; box-shadow: 0 2px 10px rgba(0,0,0,0.5); margin-bottom: 5px; align-items: center; }
-        .reaction-menu span { cursor: pointer; font-size: 18px; transition: transform 0.1s; }
-        .reaction-menu span:hover { transform: scale(1.3); }
-        
-        /* Reply System */
-        .reply-preview { display: none; background: #1e2a30; border-left: 4px solid #00a884; padding: 8px; margin-bottom: 5px; border-radius: 4px; font-size: 12px; position: relative; }
-        .reply-preview .close-btn { position: absolute; right: 8px; top: 8px; cursor: pointer; color: #888; font-weight: bold; }
-        .reply-quote { background: rgba(0,0,0,0.2); border-left: 3px solid #00a884; padding: 6px; border-radius: 4px; font-size: 11px; margin-bottom: 5px; color: #ddd; max-height: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-        .reply-hint { position: absolute; top: 50%; left: -30px; transform: translateY(-50%); opacity: 0; font-size: 20px; transition: opacity 0.2s; }
 
-        .sys-log { align-self: center; background: #182229; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; margin-top:5px; }
-        .err-log { align-self: center; background: #4a1920; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; margin-top:5px; }
-
-        audio::-webkit-media-controls-panel { background-color: #f1f3f4; border-radius: 8px; }
-        audio { filter: drop-shadow(0px 2px 3px rgba(0,0,0,0.3)); }
-    </style>
-</head>
-<body>
-
-    <script>
         const API_BASE = window.location.origin.includes("localhost") && window.location.port !== "" ? window.location.origin : "http://localhost:5032";
         
         const clients = {
@@ -777,33 +710,15 @@
                 const pin = prompt("Eski mesajlarınızı cihaz değiştirince kurtarabilmek için bir Kurtarma Parolası (PIN) belirleyin:");
                 if (!pin) return alert("Parola zorunludur!");
                 
-                alert("Güvenliğiniz için uçtan uca şifreleme anahtarları oluşturuluyor. Lütfen 3-5 saniye bekleyin...");
-
-                setTimeout(async () => {
-                    try {
-                        const c = clients[cId];
-                        c.rsa.getKey();
-                        const publicKey = c.rsa.getPublicKey();
-                        const privateKey = c.rsa.getPrivateKey();
-                        
-                        const encryptedPrivateKey = CryptoJS.AES.encrypt(privateKey, pin).toString();
-                        localStorage.setItem(`rsa_private_${email}`, privateKey);
-                        
-                        body = { email, nickname, publicKey, encryptedPrivateKey };
-
-                        const res = await fetch(`${API_BASE}${endpoint}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body)
-                        });
-
-                        if (res.ok) alert(`OTP gönderildi (Terminal ekranına bakınız).`);
-                        else { const data = await res.json(); alert(`Hata: ${data.message}`); }
-                    } catch (e) {
-                        alert("Kayıt sırasında bir hata oluştu: " + e.message);
-                    }
-                }, 100);
-                return;
+                const c = clients[cId];
+                c.rsa.getKey();
+                const publicKey = c.rsa.getPublicKey();
+                const privateKey = c.rsa.getPrivateKey();
+                
+                const encryptedPrivateKey = CryptoJS.AES.encrypt(privateKey, pin).toString();
+                localStorage.setItem(`rsa_private_${email}`, privateKey);
+                
+                body = { email, nickname, publicKey, encryptedPrivateKey };
             } else {
                 body = { email };
             }
@@ -1092,7 +1007,7 @@
             const inboxContainer = document.getElementById(`inboxList${cId}`);
             const fragment = document.createDocumentFragment();
 
-            for (const item of inboxData) {
+            inboxData.forEach(item => {
                 const msg = item.lastMessage;
                 let snippet = "[Şifreli Mesaj]";
 
@@ -1148,7 +1063,7 @@
                     </div>
                 `;
                 fragment.appendChild(div);
-            }
+            });
             
             inboxContainer.innerHTML = '';
             inboxContainer.appendChild(fragment);
@@ -1182,10 +1097,10 @@
                 c.connection.invoke("MarkMessagesAsRead", target).catch(console.error);
             }
 
-            for (const msg of history) {
+            history.forEach(msg => {
                 if (msg.isDeleted) {
                     renderMessage(cId, msg.id, msg.senderNickname, "", msg.timestamp, {}, msg.replyToMessageId, true);
-                    continue;
+                    return;
                 }
 
                 let aesKey = null;
@@ -1200,7 +1115,7 @@
                     const decryptedBytes = CryptoJS.AES.decrypt(msg.encryptedPayload, aesKey);
                     let originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
                     
-                    if (originalText.startsWith('[WEBRTC_')) continue;
+                    if (originalText.startsWith('[WEBRTC_')) return;
 
                     let isSignatureValid = false;
                     try {
@@ -1220,7 +1135,7 @@
                 } else {
                     addSysLog(cId, `[ŞİFRELİ GEÇMİŞ] Mesaj çözülemedi`, true);
                 }
-            }
+            });
         }
 
         async function clearHistory(cId) {
@@ -1323,176 +1238,4 @@
                 btn.style.background = "#dc3545";
             }
         }
-    </script>
-
-    <!-- Modal for enlarging images -->
-    <div id="imageModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:9999; justify-content:center; align-items:center;" onclick="this.style.display='none'">
-        <img id="enlargedImg" style="max-width:90%; max-height:90%; border-radius:8px;">
-    </div>
-
-    <!-- Modal for Device Sessions -->
-    <div id="sessionsModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9998; justify-content:center; align-items:center;">
-        <div style="background:#2d2d2d; padding:20px; border-radius:8px; width:80%; max-width:500px; max-height:80%; overflow-y:auto;">
-            <h3 style="margin-top:0; border-bottom:1px solid #444; padding-bottom:10px;">Cihaz Kayıtlarım (Oturumlar)</h3>
-            <div id="sessionsList" style="margin-bottom:15px; font-size:12px;">Yükleniyor...</div>
-            <button onclick="document.getElementById('sessionsModal').style.display='none'" style="width:100%; background:#dc3545;">Kapat</button>
-        </div>
-    </div>
-
-    <script>
-        async function showSessions(cId) {
-            document.getElementById('sessionsModal').style.display = 'flex';
-            const list = document.getElementById('sessionsList');
-            list.innerHTML = 'Yükleniyor...';
-            
-            const c = clients[cId];
-            try {
-                const res = await fetch(`${API_BASE}/api/user/sessions`, {
-                    headers: { 'Authorization': `Bearer ${c.token}` }
-                });
-                if (!res.ok) throw new Error("Oturumlar alınamadı");
-                
-                const sessions = await res.json();
-                if (sessions.length === 0) {
-                    list.innerHTML = 'Hiç cihaz kaydı bulunamadı.';
-                    return;
-                }
-                
-                list.innerHTML = '';
-
-                [...sessions].reverse().forEach(s => {
-                    const dt = new Date(s.lastActiveAt).toLocaleString();
-                    list.innerHTML += `
-                        <div style="background:#1e1e1e; padding:10px; border-radius:5px; margin-bottom:10px; border-left:3px solid #17a2b8;">
-                            <strong>IP:</strong> ${s.ipAddress} <br/>
-                            <strong>Cihaz:</strong> <span style="color:#aaa;">${s.deviceName}</span> <br/>
-                            <strong>Son Görülme:</strong> ${dt}
-                        </div>
-                    `;
-                });
-            } catch(e) {
-                list.innerHTML = 'Hata: ' + e.message;
-            }
-        }
-
-        function updatePresenceUI(cId, isOnline, lastSeen) {
-            const el = document.getElementById(`presence${cId}`);
-            if (!el) return;
-            
-            if (isOnline) {
-                el.innerHTML = '<span style="color:#28a745; font-weight:bold;">🟢 Çevrimiçi</span>';
-            } else {
-                const dt = lastSeen ? new Date(lastSeen).toLocaleString([], {hour: '2-digit', minute:'2-digit', day:'2-digit', month:'short'}) : 'Bilinmiyor';
-                el.innerHTML = `Son Görülme: ${dt}`;
-            }
-        }
-    </script>
-
-    <!-- UI GENERATOR -->
-    <script>
-        function createClientUI(id) {
-            document.write(`
-            <div class="client-box" id="clientBox${id}">
-                <h2>Kullanıcı ${id} <button class="logout-btn" onclick="logout(${id})">Çıkış Yap</button></h2>
-                
-                <!-- INCOMING CALL MODAL -->
-                <div id="incomingCallModal${id}" style="display:none; position:absolute; top:20px; left:50%; transform:translateX(-50%); background:#28a745; color:white; padding:15px; border-radius:8px; z-index:1001; box-shadow:0 4px 10px rgba(0,0,0,0.5); text-align:center;">
-                    <div id="incomingCallText${id}" style="margin-bottom:10px; font-weight:bold;">Arama Geliyor...</div>
-                    <button style="background:#007bff; padding:5px 15px; font-size:12px; width:auto; border-radius:20px; margin-right:5px;" onclick="answerCall(${id})">Cevapla</button>
-                    <button style="background:#dc3545; padding:5px 15px; font-size:12px; width:auto; border-radius:20px;" onclick="rejectCall(${id})">Reddet</button>
-                </div>
-
-                <!-- ACTIVE CALL MODAL -->
-                <div id="callModal${id}" style="display:none; position:absolute; top:20px; left:50%; transform:translateX(-50%); background:#005c4b; color:white; padding:15px; border-radius:8px; z-index:1000; box-shadow:0 4px 10px rgba(0,0,0,0.5); text-align:center; min-width: 250px;">
-                    <div id="callModalText${id}" style="margin-bottom:10px; font-weight:bold;">Arama Sürüyor...</div>
-                    <audio id="remoteAudio${id}" autoplay controls style="width: 100%; height: 40px; margin-bottom: 10px;"></audio>
-                    <div class="row" style="justify-content:center;">
-                        <button id="muteBtn${id}" style="background:#ffc107; color:black; padding:5px 15px; font-size:12px; width:auto; border-radius:20px;" onclick="toggleMute(${id})">🔇 Sustur</button>
-                        <button style="background:#dc3545; padding:5px 15px; font-size:12px; width:auto; border-radius:20px;" onclick="endCall(${id})">Kapat</button>
-                    </div>
-                </div>
-
-                <!-- AUTH SECTION -->
-                <div id="auth${id}">
-                    <h4>1. Giriş / Kayıt</h4>
-                    <input type="email" id="email${id}" placeholder="Email Adresi">
-                    <input type="text" id="nick${id}" placeholder="Nickname (Sadece Register için)">
-                    <div class="row">
-                        <button onclick="requestOtp(${id}, 'login')">Giriş Yap (Login)</button>
-                        <button onclick="requestOtp(${id}, 'register')" style="background:#28a745;">Kayıt Ol (Register)</button>
-                    </div>
-                    
-                    <h4 style="margin-top:15px;">2. OTP Doğrulama</h4>
-                    <input type="text" id="otp${id}" placeholder="Konsola gelen 6 haneli OTP">
-                    <button onclick="verifyOtp(${id})" style="background:#17a2b8;">Doğrula & Sisteme Gir</button>
-                </div>
-
-                <!-- APP SECTION -->
-                <div id="app${id}" style="display:none;">
-                    <div class="profile-header">
-                        <img id="myPic${id}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=">
-                        <div style="flex-grow: 1;">
-                            <h3 style="border:none; margin:0;">Hoşgeldin <span id="myName${id}"></span></h3>
-                            <input type="file" style="font-size:10px; width:180px;" onchange="uploadPic(${id}, this)" accept="image/*">
-                        </div>
-                        <button onclick="showSessions(${id})" style="width:auto; padding:5px; font-size:11px; background:#17a2b8;">📱 Cihazlarım</button>
-                    </div>
-
-                    <div style="display:flex; justify-content:space-between; align-items:center; position:relative;">
-                        <h4 style="border:none; margin:0; margin-bottom:5px;">Rehber (Kişi Ara)</h4>
-                    </div>
-                    <div style="position:relative; margin-bottom:15px;">
-                        <input type="text" id="contactSearch${id}" placeholder="Kullanıcı ara..." oninput="debounceSearchContacts(${id})" style="margin-bottom:0;">
-                        <div id="searchResults${id}" style="display:none; position:absolute; top:100%; left:0; right:0; background:#333; border:1px solid #444; border-radius:4px; max-height:200px; overflow-y:auto; z-index:100; box-shadow:0 4px 6px rgba(0,0,0,0.3);">
-                            <!-- Sonuçlar buraya gelecek -->
-                        </div>
-                    </div>
-
-                    <h4>DM Kutusu (Inbox) <button style="width:auto; padding:3px 10px; font-size:10px; float:right;" onclick="loadInbox(${id})">Yenile</button></h4>
-                    <div class="inbox-list" id="inboxList${id}">
-                    </div>
-
-                    <h4 style="margin-top:15px;">Engellenen Kişiler <button style="width:auto; padding:3px 10px; font-size:10px; float:right;" onclick="loadBlockedListUI(${id})">Yenile</button></h4>
-                    <div class="inbox-list" id="blockedList${id}" style="height:60px; margin-bottom:15px;">
-                    </div>
-
-                    <h4>Sohbet Penceresi</h4>
-                    <div class="row">
-                        <input type="text" id="to${id}" placeholder="Kiminle Konuşulacak? (Nickname)" readonly style="background:#222; color:#888; width: 40%;">
-                        <button style="width:auto; padding:8px; background:#dc3545; margin:0;" onclick="clearHistory(${id})" title="Sohbeti Sil">🗑️</button>
-                        <button style="width:auto; padding:8px 12px; background:#007bff; margin:0;" onclick="startCall(${id})" title="Sesli Ara">📞</button>
-                        <button id="blockBtn${id}" class="block-btn" style="width:80px; margin:0;" onclick="toggleBlock(${id})">Engelle</button>
-                    </div>
-                    
-                    <div id="presence${id}" style="font-size: 11px; margin-top: -8px; margin-bottom: 8px; color: #888; min-height: 15px;"></div>
-                    
-                    <div class="logs" id="log${id}"></div>
-                    
-                    <div id="replyPreview${id}" class="reply-preview">
-                        <span class="close-btn" onclick="cancelReply(${id})">✕</span>
-                        <div style="color:#00a884; font-weight:bold; margin-bottom:2px;">Yanıtlanıyor...</div>
-                        <div id="replyText${id}" style="color:#bbb;"></div>
-                    </div>
-
-                    <div class="row" style="align-items:center;">
-                        <label for="imgUpload${id}" style="cursor:pointer; background:#28a745; border-radius:4px; padding:8px 12px; margin:5px 0; display:flex; align-items:center; justify-content:center; box-sizing:border-box;" title="Resim Ekle">📎</label>
-                        <input type="file" id="imgUpload${id}" accept="image/*" style="display:none;" onchange="sendImage(${id}, this)">
-                        
-                        <button id="micBtn${id}" style="width:auto; padding:8px 12px; background:#17a2b8; margin:5px 0;" onclick="toggleRecording(${id})" title="Sesli Mesaj (Kaydet & Gönder)">🎙️</button>
-                        
-                        <input type="text" id="msg${id}" placeholder="Gizli Mesajınız..." style="flex:1;">
-                        <button style="width:70px; margin:0;" onclick="sendMessage(${id})">Gönder</button>
-                    </div>
-                </div>
-            </div>
-            `);
-        }
-    </script>
-
-    <!-- RENDER -->
-    <script>
-        createClientUI(1);
-        createClientUI(2);
-    </script>
-</body>
-</html>
+    

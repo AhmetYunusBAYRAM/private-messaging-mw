@@ -16,6 +16,8 @@ public class ChatMessage
     
     public string SenderEncryptedSymKey { get; set; } = string.Empty;
     public string ReceiverEncryptedSymKey { get; set; } = string.Empty;
+    public Dictionary<string, string> ReceiverEphemeralSymKeys { get; set; } = new();
+    public string DigitalSignature { get; set; } = string.Empty;
     
     public string EncryptedPayload { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;

@@ -14,32 +14,44 @@ public class MessageService : IMessageService
         _messages = database.GetCollection<ChatMessage>("ChatMessages");
     }
 
-    public async Task<PagedResponse<ChatMessage>> GetHistoryAsync(string myNickname, string contactNickname, int page, int limit)
+    public async Task<PagedResponse<ChatMessage>> GetHistoryAsync(string myNickname, string contactNickname, string? cursor, int limit)
     {
-        var filter = Builders<ChatMessage>.Filter.And(
-            Builders<ChatMessage>.Filter.Or(
-                Builders<ChatMessage>.Filter.And(
-                    Builders<ChatMessage>.Filter.Eq(x => x.SenderNickname, myNickname),
-                    Builders<ChatMessage>.Filter.Eq(x => x.ReceiverNickname, contactNickname)
+        var filterBuilder = Builders<ChatMessage>.Filter;
+        var filter = filterBuilder.And(
+            filterBuilder.Or(
+                filterBuilder.And(
+                    filterBuilder.Eq(x => x.SenderNickname, myNickname),
+                    filterBuilder.Eq(x => x.ReceiverNickname, contactNickname)
                 ),
-                Builders<ChatMessage>.Filter.And(
-                    Builders<ChatMessage>.Filter.Eq(x => x.SenderNickname, contactNickname),
-                    Builders<ChatMessage>.Filter.Eq(x => x.ReceiverNickname, myNickname)
+                filterBuilder.And(
+                    filterBuilder.Eq(x => x.SenderNickname, contactNickname),
+                    filterBuilder.Eq(x => x.ReceiverNickname, myNickname)
                 )
             ),
-            Builders<ChatMessage>.Filter.Not(
-                Builders<ChatMessage>.Filter.AnyEq(x => x.DeletedFor, myNickname)
+            filterBuilder.Not(
+                filterBuilder.AnyEq(x => x.DeletedFor, myNickname)
             )
         );
+
+        if (!string.IsNullOrEmpty(cursor))
+        {
+            var cursorFilter = filterBuilder.Lt(x => x.Id, cursor);
+            filter = filterBuilder.And(filter, cursorFilter);
+        }
         
         var totalCount = await _messages.CountDocumentsAsync(filter);
         
         var messages = await _messages.Find(filter)
-            .SortByDescending(x => x.Timestamp)
-            .Skip((page - 1) * limit)
+            .SortByDescending(x => x.Id)
             .Limit(limit)
             .ToListAsync();
             
+        string? nextCursor = null;
+        if (messages.Count == limit)
+        {
+            nextCursor = messages.Last().Id;
+        }
+
         // Reverse to return them in chronological order for the client
         messages.Reverse();
 
@@ -47,8 +59,7 @@ public class MessageService : IMessageService
         {
             Items = messages,
             TotalCount = (int)totalCount,
-            Page = page,
-            Limit = limit
+            NextCursor = nextCursor
         };
     }
 

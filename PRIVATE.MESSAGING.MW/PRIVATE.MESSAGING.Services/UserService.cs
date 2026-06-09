@@ -74,7 +74,7 @@ public class UserService : IUserService
         };
     }
 
-    public async Task<PagedResponse<object>> GetContactsAsync(string myNickname, string? query, int page, int limit)
+    public async Task<PagedResponse<object>> GetContactsAsync(string myNickname, string? query, string? cursor, int limit)
     {
         var filterBuilder = Builders<User>.Filter;
         var filter = filterBuilder.Ne(u => u.Nickname, myNickname);
@@ -85,10 +85,16 @@ public class UserService : IUserService
             filter = filterBuilder.And(filter, searchFilter);
         }
 
+        if (!string.IsNullOrEmpty(cursor))
+        {
+            var cursorFilter = filterBuilder.Gt(u => u.Nickname, cursor);
+            filter = filterBuilder.And(filter, cursorFilter);
+        }
+
         var totalCount = await _users.CountDocumentsAsync(filter);
 
         var users = await _users.Find(filter)
-            .Skip((page - 1) * limit)
+            .SortBy(u => u.Nickname)
             .Limit(limit)
             .ToListAsync();
         
@@ -97,14 +103,19 @@ public class UserService : IUserService
             nickname = u.Nickname,
             profilePictureBase64 = u.BlockedUsers != null && u.BlockedUsers.Any(b => b.Nickname == myNickname) ? "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" : u.ProfilePictureBase64,
             lastSeen = u.BlockedUsers != null && u.BlockedUsers.Any(b => b.Nickname == myNickname) ? (DateTime?)null : u.LastSeen
-        }).Cast<object>();
+        }).Cast<object>().ToList();
+
+        string? nextCursor = null;
+        if (users.Count == limit)
+        {
+            nextCursor = users.Last().Nickname;
+        }
 
         return new PagedResponse<object>
         {
             Items = items,
             TotalCount = (int)totalCount,
-            Page = page,
-            Limit = limit
+            NextCursor = nextCursor
         };
     }
 

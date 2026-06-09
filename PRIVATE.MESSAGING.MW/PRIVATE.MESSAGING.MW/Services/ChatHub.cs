@@ -18,28 +18,38 @@ public class ChatHub : Hub
     public override async Task OnConnectedAsync()
     {
         var nickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (!string.IsNullOrEmpty(nickname))
+        var ephemeralKey = Context.GetHttpContext()?.Request.Query["ephemeralKey"].ToString() ?? "";
+        var deviceId = Context.GetHttpContext()?.Request.Query["deviceId"].ToString() ?? "";
+
+        if (!string.IsNullOrEmpty(nickname) && !string.IsNullOrEmpty(deviceId))
         {
-            _chatService.UserConnected(nickname, Context.ConnectionId);
+            Context.Items["deviceId"] = deviceId;
+            _chatService.UserConnected(nickname, deviceId, Context.ConnectionId, ephemeralKey);
             await _chatService.UpdateOnlineStatusAsync(nickname, true);
             await Clients.All.SendAsync("UserPresenceUpdate", nickname, true, DateTime.UtcNow);
         }
         await base.OnConnectedAsync();
     }
 
-    public async Task<string?> SendPrivateMessage(string to, string senderSymKey, string receiverSymKey, string payload, string? replyToMessageId = null)
+    public async Task<string?> SendPrivateMessage(string to, string senderSymKey, Dictionary<string, string> ephemeralSymKeys, string signature, string payload, string? replyToMessageId = null)
     {
         var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(myNickname)) return null;
 
         try
         {
-            var chatMsg = await _chatService.SendPrivateMessageAsync(myNickname, to, senderSymKey, receiverSymKey, payload, replyToMessageId);
+            var chatMsg = await _chatService.SendPrivateMessageAsync(myNickname, to, senderSymKey, ephemeralSymKeys, signature, payload, replyToMessageId);
 
-            var targetConnectionId = _chatService.GetConnectionId(to);
-            if (targetConnectionId != null)
+            var activeConnections = _chatService.GetActiveConnections(to);
+            foreach(var kvp in activeConnections)
             {
-                await Clients.Client(targetConnectionId).SendAsync("ReceiveMessage", chatMsg.Id, myNickname, receiverSymKey, payload, replyToMessageId);
+                var deviceId = kvp.Key;
+                var connId = kvp.Value.ConnectionId;
+                
+                if (chatMsg.ReceiverEphemeralSymKeys != null && chatMsg.ReceiverEphemeralSymKeys.TryGetValue(deviceId, out var receiverSymKey))
+                {
+                    await Clients.Client(connId).SendAsync("ReceiveMessage", chatMsg.Id, myNickname, receiverSymKey, signature, payload, replyToMessageId);
+                }
             }
 
             return chatMsg.Id;
@@ -59,15 +69,17 @@ public class ChatHub : Hub
         {
             var (finalEmoji, senderNickname, receiverNickname) = await _chatService.AddReactionAsync(myNickname, messageId, emoji);
 
-            var senderId = _chatService.GetConnectionId(senderNickname);
-            if (senderId != null)
-                await Clients.Client(senderId).SendAsync("ReceiveReaction", messageId, myNickname, finalEmoji);
+            foreach(var conn in _chatService.GetActiveConnections(senderNickname).Values)
+            {
+                await Clients.Client(conn.ConnectionId).SendAsync("ReceiveReaction", messageId, myNickname, finalEmoji);
+            }
 
             if (senderNickname != receiverNickname)
             {
-                var receiverId = _chatService.GetConnectionId(receiverNickname);
-                if (receiverId != null)
-                    await Clients.Client(receiverId).SendAsync("ReceiveReaction", messageId, myNickname, finalEmoji);
+                foreach(var conn in _chatService.GetActiveConnections(receiverNickname).Values)
+                {
+                    await Clients.Client(conn.ConnectionId).SendAsync("ReceiveReaction", messageId, myNickname, finalEmoji);
+                }
             }
         }
         catch (InvalidOperationException ex)
@@ -85,15 +97,17 @@ public class ChatHub : Hub
         {
             var msg = await _chatService.DeleteMessageAsync(myNickname, messageId);
 
-            var senderId = _chatService.GetConnectionId(msg.SenderNickname);
-            if (senderId != null)
-                await Clients.Client(senderId).SendAsync("MessageDeleted", messageId);
+            foreach(var conn in _chatService.GetActiveConnections(msg.SenderNickname).Values)
+            {
+                await Clients.Client(conn.ConnectionId).SendAsync("MessageDeleted", messageId);
+            }
 
             if (msg.SenderNickname != msg.ReceiverNickname)
             {
-                var receiverId = _chatService.GetConnectionId(msg.ReceiverNickname);
-                if (receiverId != null)
-                    await Clients.Client(receiverId).SendAsync("MessageDeleted", messageId);
+                foreach(var conn in _chatService.GetActiveConnections(msg.ReceiverNickname).Values)
+                {
+                    await Clients.Client(conn.ConnectionId).SendAsync("MessageDeleted", messageId);
+                }
             }
         }
         catch (InvalidOperationException ex)
@@ -105,11 +119,19 @@ public class ChatHub : Hub
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var nickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (!string.IsNullOrEmpty(nickname))
+        if (!string.IsNullOrEmpty(nickname) && Context.Items.TryGetValue("deviceId", out var devIdObj))
         {
-            _chatService.UserDisconnected(nickname);
-            await _chatService.UpdateOnlineStatusAsync(nickname, false);
-            await Clients.All.SendAsync("UserPresenceUpdate", nickname, false, DateTime.UtcNow);
+            var deviceId = devIdObj?.ToString();
+            if (!string.IsNullOrEmpty(deviceId))
+            {
+                _chatService.UserDisconnected(nickname, deviceId);
+                
+                if (!_chatService.GetActiveConnections(nickname).Any())
+                {
+                    await _chatService.UpdateOnlineStatusAsync(nickname, false);
+                    await Clients.All.SendAsync("UserPresenceUpdate", nickname, false, DateTime.UtcNow);
+                }
+            }
         }
         await base.OnDisconnectedAsync(exception);
     }
@@ -123,9 +145,39 @@ public class ChatHub : Hub
 
         if (modifiedCount > 0)
         {
-            var targetConnectionId = _chatService.GetConnectionId(targetNickname);
-            if (targetConnectionId != null)
-                await Clients.Client(targetConnectionId).SendAsync("MessagesRead", myNickname);
+            foreach(var conn in _chatService.GetActiveConnections(targetNickname).Values)
+            {
+                await Clients.Client(conn.ConnectionId).SendAsync("MessagesRead", myNickname);
+            }
+        }
+    }
+
+    public async Task SyncMessages(string lastMessageId)
+    {
+        var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(myNickname) || string.IsNullOrEmpty(lastMessageId)) return;
+
+        var missed = await _chatService.SyncMissedMessagesAsync(myNickname, lastMessageId);
+        foreach (var msg in missed)
+        {
+            await Clients.Caller.SendAsync("ReceiveMessage", msg.Id, msg.SenderNickname, msg.ReceiverEncryptedSymKey, msg.DigitalSignature, msg.EncryptedPayload, msg.ReplyToMessageId);
+        }
+    }
+
+    public Dictionary<string, string> GetEphemeralPublicKeys(string targetNickname)
+    {
+        return _chatService.GetActiveConnections(targetNickname)
+                           .ToDictionary(k => k.Key, v => v.Value.EphemeralPublicKey);
+    }
+
+    public async Task SendWebRTCSignal(string to, string payload)
+    {
+        var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(myNickname)) return;
+
+        foreach(var conn in _chatService.GetActiveConnections(to).Values)
+        {
+            await Clients.Client(conn.ConnectionId).SendAsync("ReceiveWebRTCSignal", myNickname, payload);
         }
     }
 }

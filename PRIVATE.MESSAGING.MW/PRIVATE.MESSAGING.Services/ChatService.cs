@@ -4,6 +4,7 @@ using PRIVATE.MESSAGING.Core.Entities;
 using PRIVATE.MESSAGING.Core.Entities.Attributes;
 using PRIVATE.MESSAGING.Core.Interfaces;
 
+using System.Text.Json;
 namespace PRIVATE.MESSAGING.Services;
 
 public class ChatService : IChatService
@@ -19,20 +20,48 @@ public class ChatService : IChatService
         _cache = cache;
     }
 
-    public void UserConnected(string nickname, string connectionId)
+    private class DeviceSession
     {
-        var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24) };
-        _cache.SetString($"conn_{nickname}", connectionId, options);
+        public string ConnectionId { get; set; } = string.Empty;
+        public string EphemeralPublicKey { get; set; } = string.Empty;
     }
 
-    public bool UserDisconnected(string nickname)
+    public void UserConnected(string nickname, string deviceId, string connectionId, string ephemeralPublicKey)
+    {
+        var key = $"conn_{nickname}";
+        var data = _cache.GetString(key);
+        var sessions = string.IsNullOrEmpty(data) 
+            ? new Dictionary<string, DeviceSession>() 
+            : JsonSerializer.Deserialize<Dictionary<string, DeviceSession>>(data) ?? new Dictionary<string, DeviceSession>();
+
+        sessions[deviceId] = new DeviceSession { ConnectionId = connectionId, EphemeralPublicKey = ephemeralPublicKey };
+        
+        var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24) };
+        _cache.SetString(key, JsonSerializer.Serialize(sessions), options);
+    }
+
+    public bool UserDisconnected(string nickname, string deviceId)
     {
         try
         {
             var key = $"conn_{nickname}";
-            if (_cache.GetString(key) == null) return false;
+            var data = _cache.GetString(key);
+            if (string.IsNullOrEmpty(data)) return false;
             
-            _cache.Remove(key);
+            var sessions = JsonSerializer.Deserialize<Dictionary<string, DeviceSession>>(data);
+            if (sessions == null || !sessions.ContainsKey(deviceId)) return false;
+
+            sessions.Remove(deviceId);
+
+            if (sessions.Count == 0)
+            {
+                _cache.Remove(key);
+            }
+            else
+            {
+                var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24) };
+                _cache.SetString(key, JsonSerializer.Serialize(sessions), options);
+            }
             return true;
         }
         catch
@@ -41,12 +70,25 @@ public class ChatService : IChatService
         }
     }
 
-    public string? GetConnectionId(string nickname)
+    public Dictionary<string, (string ConnectionId, string EphemeralPublicKey)> GetActiveConnections(string nickname)
     {
-        return _cache.GetString($"conn_{nickname}");
+        var data = _cache.GetString($"conn_{nickname}");
+        if (string.IsNullOrEmpty(data)) return new Dictionary<string, (string, string)>();
+
+        try
+        {
+            var sessions = JsonSerializer.Deserialize<Dictionary<string, DeviceSession>>(data);
+            if (sessions == null) return new Dictionary<string, (string, string)>();
+
+            return sessions.ToDictionary(k => k.Key, v => (v.Value.ConnectionId, v.Value.EphemeralPublicKey));
+        }
+        catch
+        {
+            return new Dictionary<string, (string, string)>();
+        }
     }
 
-    public async Task<ChatMessage> SendPrivateMessageAsync(string senderNickname, string to, string senderSymKey, string receiverSymKey, string payload, string? replyToMessageId)
+    public async Task<ChatMessage> SendPrivateMessageAsync(string senderNickname, string to, string senderSymKey, Dictionary<string, string> ephemeralSymKeys, string signature, string payload, string? replyToMessageId)
     {
         var senderUser = await _users.Find(u => u.Nickname == senderNickname).FirstOrDefaultAsync();
         var receiverUser = await _users.Find(u => u.Nickname == to).FirstOrDefaultAsync();
@@ -64,13 +106,19 @@ public class ChatService : IChatService
             throw new InvalidOperationException($"Bu kullanıcı sizi {localTime} tarihinde engelledi, ona mesaj gönderemezsiniz.");
         }
 
+        // The ephemeralSymKeys should also contain the static key mapped under "STATIC" key from frontend.
+        var receiverStaticSymKey = ephemeralSymKeys.GetValueOrDefault("STATIC") ?? string.Empty;
+        if (ephemeralSymKeys.ContainsKey("STATIC")) ephemeralSymKeys.Remove("STATIC");
+
         var chatMsg = new ChatMessage
         {
             SenderNickname = senderNickname,
             ReceiverNickname = to,
             ReplyToMessageId = replyToMessageId,
             SenderEncryptedSymKey = senderSymKey,
-            ReceiverEncryptedSymKey = receiverSymKey,
+            ReceiverEncryptedSymKey = receiverStaticSymKey,
+            ReceiverEphemeralSymKeys = ephemeralSymKeys,
+            DigitalSignature = signature,
             EncryptedPayload = payload,
             Timestamp = DateTime.UtcNow
         };
@@ -161,5 +209,18 @@ public class ChatService : IChatService
             .Set(u => u.IsOnline, isOnline)
             .Set(u => u.LastSeen, DateTime.UtcNow);
         await _users.UpdateOneAsync(u => u.Nickname == nickname, update);
+    }
+    public async Task<IEnumerable<ChatMessage>> SyncMissedMessagesAsync(string myNickname, string lastMessageId)
+    {
+        var filterBuilder = Builders<ChatMessage>.Filter;
+        var filter = filterBuilder.And(
+            filterBuilder.Eq(x => x.ReceiverNickname, myNickname),
+            filterBuilder.Gt(x => x.Id, lastMessageId),
+            filterBuilder.Eq(x => x.IsRead, false)
+        );
+
+        return await _messages.Find(filter)
+            .SortBy(x => x.Timestamp)
+            .ToListAsync();
     }
 }

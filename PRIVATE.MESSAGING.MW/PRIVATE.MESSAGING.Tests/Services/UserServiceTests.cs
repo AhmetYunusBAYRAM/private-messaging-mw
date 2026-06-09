@@ -92,7 +92,7 @@ public class UserServiceTests
         };
         var (service, _) = CreateService(users);
 
-        var result = await service.GetContactsAsync("requester", "alice", 1, 50);
+        var result = await service.GetContactsAsync("requester", "alice", null, 50);
 
         var list = result.Items.ToList();
         Assert.All(list, u =>

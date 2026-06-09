@@ -43,12 +43,12 @@ public class UserController : ControllerBase
 
     [Authorize]
     [HttpGet("contacts")]
-    public async Task<IActionResult> GetContacts([FromQuery] string? query = null, [FromQuery] int page = 1, [FromQuery] int limit = 50)
+    public async Task<IActionResult> GetContacts([FromQuery] string? query = null, [FromQuery] string? cursor = null, [FromQuery] int limit = 50)
     {
         var myNickname = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(myNickname)) return Unauthorized();
 
-        var contacts = await _userService.GetContactsAsync(myNickname, query, page, limit);
+        var contacts = await _userService.GetContactsAsync(myNickname, query, cursor, limit);
         return Ok(contacts);
     }
 
