@@ -95,9 +95,14 @@ public class UserController : ControllerBase
         var nickname = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(nickname)) return Unauthorized();
 
-        var filter = Builders<ChatMessage>.Filter.Or(
-            Builders<ChatMessage>.Filter.Eq(x => x.SenderNickname, nickname),
-            Builders<ChatMessage>.Filter.Eq(x => x.ReceiverNickname, nickname)
+        var filter = Builders<ChatMessage>.Filter.And(
+            Builders<ChatMessage>.Filter.Or(
+                Builders<ChatMessage>.Filter.Eq(x => x.SenderNickname, nickname),
+                Builders<ChatMessage>.Filter.Eq(x => x.ReceiverNickname, nickname)
+            ),
+            Builders<ChatMessage>.Filter.Not(
+                Builders<ChatMessage>.Filter.AnyEq(x => x.DeletedFor, nickname)
+            )
         );
         
         var allMessages = await _messages.Find(filter).SortByDescending(x => x.Timestamp).ToListAsync();

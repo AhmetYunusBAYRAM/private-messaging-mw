@@ -27,4 +27,6 @@ public class ChatMessage
     
     // Key: Nickname, Value: Emoji (e.g., "❤️", "👍")
     public Dictionary<string, string> Reactions { get; set; } = new();
+
+    public List<string> DeletedFor { get; set; } = new();
 }
