@@ -14,7 +14,7 @@
         input, button, select { padding: 8px; margin: 5px 0; border-radius: 4px; border: 1px solid #444; background: #333; color: white; width: calc(100% - 18px); box-sizing: border-box; }
         button { background: #007bff; cursor: pointer; font-weight: bold; width: 100%; margin-top:5px; }
         button:hover { background: #0056b3; }
-        .logs { height: 350px; overflow-y: scroll; border: 1px solid #444; padding: 10px; background: #0b141a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; margin-top: 5px; margin-bottom: 5px; display: flex; flex-direction: column; gap: 8px; }
+        .logs { height: 350px; overflow-y: scroll; border: 1px solid #444; padding: 10px; background: #0b141a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; margin-top: 5px; margin-bottom: 5px; display: flex; flex-direction: column; gap: 8px; position: relative;}
         h2, h3, h4 { border-bottom: 1px solid #444; padding-bottom: 5px; margin-top: 0; margin-bottom:10px; }
         .row { display: flex; gap: 10px; }
         .row input, .row select { flex: 1; }
@@ -33,7 +33,7 @@
         .blocked-user { color: #ff6b6b; font-size: 13px; padding: 5px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center;}
         
         /* Message Bubbles */
-        .msg-container { display: flex; flex-direction: column; max-width: 75%; position: relative; margin-bottom: 12px; }
+        .msg-container { display: flex; flex-direction: column; max-width: 75%; position: relative; margin-bottom: 12px; transition: transform 0.2s; }
         .msg-out { align-self: flex-end; }
         .msg-in { align-self: flex-start; }
         .msg-bubble { padding: 8px 12px; border-radius: 8px; position: relative; word-wrap: break-word; -webkit-touch-callout: none; user-select: none; }
@@ -50,6 +50,12 @@
         .reaction-menu span { cursor: pointer; font-size: 18px; transition: transform 0.1s; }
         .reaction-menu span:hover { transform: scale(1.3); }
         
+        /* Reply System */
+        .reply-preview { display: none; background: #1e2a30; border-left: 4px solid #00a884; padding: 8px; margin-bottom: 5px; border-radius: 4px; font-size: 12px; position: relative; }
+        .reply-preview .close-btn { position: absolute; right: 8px; top: 8px; cursor: pointer; color: #888; font-weight: bold; }
+        .reply-quote { background: rgba(0,0,0,0.2); border-left: 3px solid #00a884; padding: 6px; border-radius: 4px; font-size: 11px; margin-bottom: 5px; color: #ddd; max-height: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+        .reply-hint { position: absolute; top: 50%; left: -30px; transform: translateY(-50%); opacity: 0; font-size: 20px; transition: opacity 0.2s; }
+
         .sys-log { align-self: center; background: #182229; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; }
         .err-log { align-self: center; background: #4a1920; color: #f1f1f2; font-size: 11px; padding: 5px 10px; border-radius: 8px; text-align: center; max-width: 80%; }
     </style>
@@ -60,8 +66,8 @@
         const API_BASE = window.location.origin.includes("localhost") && window.location.port !== "" ? window.location.origin : "http://localhost:5032";
         
         const clients = {
-            1: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [] },
-            2: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [] }
+            1: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [], messages: {}, activeReplyId: null },
+            2: { connection: null, rsa: new JSEncrypt(), token: '', nickname: '', email: '', blocked: [], messages: {}, activeReplyId: null }
         };
 
         window.onload = () => {
@@ -75,12 +81,13 @@
             logs.scrollTop = logs.scrollHeight;
         }
 
+        // --- LONG PRESS FOR REACTIONS ---
         let pressTimer;
         function startPress(e, cId, msgId) {
             cancelPress();
             pressTimer = setTimeout(() => {
                 showReactionMenu(cId, msgId);
-            }, 400); // 400ms basılı tutma
+            }, 400); 
         }
 
         function cancelPress() {
@@ -88,7 +95,6 @@
         }
 
         function showReactionMenu(cId, msgId) {
-            // Hepsini gizle
             document.querySelectorAll('.reaction-menu').forEach(m => m.style.display = 'none');
             const menu = document.getElementById(`rxMenu_${cId}_${msgId}`);
             if (menu) menu.style.display = 'flex';
@@ -105,13 +111,83 @@
             }
         });
 
-        function renderMessage(cId, msgId, sender, text, timestamp, reactions = {}) {
+        // --- SWIPE TO REPLY (Touch & Mouse) ---
+        let startX = 0;
+        let isDragging = false;
+        let currentContainer = null;
+
+        function handleDragStart(e) {
+            if (e.target.closest('.reaction-menu')) return;
+            isDragging = true;
+            startX = e.type.includes('mouse') ? e.clientX : e.touches[0].clientX;
+            currentContainer = e.currentTarget;
+            currentContainer.style.transition = 'none';
+        }
+
+        function handleDragMove(e) {
+            if (!isDragging || !currentContainer) return;
+            let currentX = e.type.includes('mouse') ? e.clientX : e.touches[0].clientX;
+            let diffX = currentX - startX;
+            
+            // Eğer 10px'den fazla hareket varsa, emoji basılı tutma (long press) iptal olsun
+            if (Math.abs(diffX) > 10) cancelPress();
+
+            // Sadece sağa kaydırmaya izin ver (max 60px)
+            if (diffX > 0 && diffX < 80) {
+                currentContainer.style.transform = `translateX(${diffX}px)`;
+                // İkonun belirginleşmesi
+                const hint = currentContainer.querySelector('.reply-hint');
+                if (hint) hint.style.opacity = diffX / 50;
+            }
+        }
+
+        function handleDragEnd(e, cId, msgId) {
+            if (!isDragging || !currentContainer) return;
+            isDragging = false;
+            
+            let endX = e.type.includes('mouse') ? e.clientX : (e.changedTouches ? e.changedTouches[0].clientX : startX);
+            let diffX = endX - startX;
+
+            // UI'ı geri yaylandır
+            currentContainer.style.transition = 'transform 0.2s';
+            currentContainer.style.transform = `translateX(0px)`;
+            const hint = currentContainer.querySelector('.reply-hint');
+            if (hint) hint.style.opacity = 0;
+            
+            currentContainer = null;
+
+            if (diffX > 40) {
+                setReply(cId, msgId);
+            }
+        }
+
+        function setReply(cId, msgId) {
+            const c = clients[cId];
+            if (!c.messages[msgId]) return;
+            c.activeReplyId = msgId;
+            const previewBox = document.getElementById(`replyPreview${cId}`);
+            const previewText = document.getElementById(`replyText${cId}`);
+            let txt = c.messages[msgId];
+            previewText.innerText = txt.length > 50 ? txt.substring(0, 50) + "..." : txt;
+            previewBox.style.display = 'block';
+            document.getElementById(`msg${cId}`).focus();
+        }
+
+        function cancelReply(cId) {
+            clients[cId].activeReplyId = null;
+            document.getElementById(`replyPreview${cId}`).style.display = 'none';
+        }
+
+        // --- RENDER MESSAGE ---
+        function renderMessage(cId, msgId, sender, text, timestamp, reactions = {}, replyToId = null) {
             const logs = document.getElementById(`log${cId}`);
             const c = clients[cId];
             const isMe = sender === c.nickname;
             const timeStr = new Date(timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
             
-            // Generate reactions HTML
+            // Store decrypted text for reply lookups
+            c.messages[msgId] = text;
+
             let rxHtml = '';
             const emojiCounts = {};
             let totalRx = 0;
@@ -124,8 +200,26 @@
                 rxHtml = `<div class="reaction-badge" title="Tepkiler">${displayEmojis} ${totalRx > 1 ? totalRx : ''}</div>`;
             }
 
+            let replyHtml = '';
+            if (replyToId) {
+                let repliedText = c.messages[replyToId];
+                if (!repliedText) repliedText = "Şifreli mesaj (Eski mesaj).";
+                if (repliedText.length > 60) repliedText = repliedText.substring(0, 60) + "...";
+                replyHtml = `<div class="reply-quote" onclick="document.getElementById('msgBox_${cId}_${replyToId}')?.scrollIntoView({behavior:'smooth'})">${repliedText}</div>`;
+            }
+
             const html = `
-                <div class="msg-container ${isMe ? 'msg-out' : 'msg-in'}" id="msgBox_${cId}_${msgId}">
+                <div class="msg-container ${isMe ? 'msg-out' : 'msg-in'}" id="msgBox_${cId}_${msgId}"
+                     ondblclick="setReply('${cId}', '${msgId}')"
+                     onmousedown="handleDragStart(event)"
+                     onmousemove="handleDragMove(event)"
+                     onmouseup="handleDragEnd(event, '${cId}', '${msgId}')"
+                     onmouseleave="handleDragEnd(event, '${cId}', '${msgId}')"
+                     ontouchstart="handleDragStart(event)"
+                     ontouchmove="handleDragMove(event)"
+                     ontouchend="handleDragEnd(event, '${cId}', '${msgId}')"
+                     ontouchcancel="handleDragEnd(event, '${cId}', '${msgId}')">
+                    <div class="reply-hint">↩️</div>
                     <div class="msg-bubble" 
                          onmousedown="startPress(event, '${cId}', '${msgId}')" 
                          onmouseup="cancelPress()" 
@@ -133,6 +227,7 @@
                          ontouchstart="startPress(event, '${cId}', '${msgId}')" 
                          ontouchend="cancelPress()" 
                          ontouchcancel="cancelPress()">
+                        ${replyHtml}
                         <div>${text}</div>
                         <span class="msg-time">${timeStr}</span>
                         ${rxHtml}
@@ -272,23 +367,22 @@
                 .withAutomaticReconnect()
                 .build();
 
-            c.connection.on("ReceiveMessage", async (msgId, from, receiverSymKey, encryptedPayload) => {
+            c.connection.on("ReceiveMessage", async (msgId, from, receiverSymKey, encryptedPayload, replyToId) => {
                 const aesKey = c.rsa.decrypt(receiverSymKey);
                 if (!aesKey) return;
                 const decryptedBytes = CryptoJS.AES.decrypt(encryptedPayload, aesKey);
                 const originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
                 
                 if (document.getElementById(`to${cId}`).value === from) {
-                    renderMessage(cId, msgId, from, originalText, new Date().toISOString(), {});
+                    renderMessage(cId, msgId, from, originalText, new Date().toISOString(), {}, replyToId);
                 }
                 await loadInbox(cId);
             });
 
             c.connection.on("ReceiveReaction", (msgId, reactorNick, emoji) => {
-                // Sadece sohbet penceresi açıksa yenile
                 const box = document.getElementById(`msgBox_${cId}_${msgId}`);
                 if (box) {
-                    loadHistory(cId); // Olayı temiz parse etmek için
+                    loadHistory(cId);
                 }
             });
 
@@ -407,6 +501,7 @@
             if (!target) return;
 
             document.getElementById(`log${cId}`).innerHTML = ''; 
+            c.messages = {}; // Reset local cache for this chat
             
             const res = await fetch(`${API_BASE}/api/message/history/${target}`, {
                 headers: { 'Authorization': `Bearer ${c.token}` }
@@ -425,7 +520,7 @@
                     const decryptedBytes = CryptoJS.AES.decrypt(msg.encryptedPayload, aesKey);
                     const originalText = decryptedBytes.toString(CryptoJS.enc.Utf8);
                     
-                    renderMessage(cId, msg.id, msg.senderNickname, originalText, msg.timestamp, msg.reactions || {});
+                    renderMessage(cId, msg.id, msg.senderNickname, originalText, msg.timestamp, msg.reactions || {}, msg.replyToMessageId);
                 } else {
                     addSysLog(cId, `[ŞİFRELİ GEÇMİŞ] Mesaj çözülemedi`, true);
                 }
@@ -460,9 +555,12 @@
             const senderSymKey = encryptorSelf.encrypt(aesKey);
 
             try {
-                const msgId = await c.connection.invoke("SendPrivateMessage", to, senderSymKey, receiverSymKey, encryptedPayload);
-                renderMessage(cId, msgId, c.nickname, msg, new Date().toISOString(), {});
+                const replyToId = c.activeReplyId; // Grab current reply state before resetting
+                const msgId = await c.connection.invoke("SendPrivateMessage", to, senderSymKey, receiverSymKey, encryptedPayload, replyToId);
+                renderMessage(cId, msgId, c.nickname, msg, new Date().toISOString(), {}, replyToId);
+                
                 document.getElementById(`msg${cId}`).value = "";
+                cancelReply(cId); // Reset UI
                 await loadInbox(cId);
             } catch (err) {
                 addSysLog(cId, `❌ HATA: ${err.message}`, true);
@@ -491,7 +589,6 @@
                     `;
                 });
                 
-                // Eğer ekranda o kişiyle chat açıksa butonu güncelle
                 const target = document.getElementById(`to${cId}`).value;
                 if(target) updateBlockButtonState(cId, target);
             }
@@ -538,10 +635,10 @@
             const btn = document.getElementById(`blockBtn${cId}`);
             if (c.blocked.includes(targetNickname)) {
                 btn.innerText = "Engeli Kaldır";
-                btn.style.background = "#28a745"; // Green for unblock
+                btn.style.background = "#28a745";
             } else {
                 btn.innerText = "Engelle";
-                btn.style.background = "#dc3545"; // Red for block
+                btn.style.background = "#dc3545";
             }
         }
     </script>
@@ -578,7 +675,6 @@
                         </div>
                     </div>
 
-                    <!-- Rehber (Yeni Sohbet) -->
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <h4 style="border:none; margin:0;">Rehber (Yeni Sohbet)</h4>
                         <button style="width:auto; padding:3px 10px; font-size:10px;" onclick="loadContacts(${id})">Rehberi Yenile</button>
@@ -589,12 +685,10 @@
 
                     <h4>DM Kutusu (Inbox) <button style="width:auto; padding:3px 10px; font-size:10px; float:right;" onclick="loadInbox(${id})">Yenile</button></h4>
                     <div class="inbox-list" id="inboxList${id}">
-                        <!-- Inbox itemlar buraya dolacak -->
                     </div>
 
                     <h4 style="margin-top:15px;">Engellenen Kişiler <button style="width:auto; padding:3px 10px; font-size:10px; float:right;" onclick="loadBlockedListUI(${id})">Yenile</button></h4>
                     <div class="inbox-list" id="blockedList${id}" style="height:60px; margin-bottom:15px;">
-                        <!-- Blocked list -->
                     </div>
 
                     <h4>Sohbet Penceresi</h4>
@@ -605,6 +699,12 @@
                     
                     <div class="logs" id="log${id}"></div>
                     
+                    <div id="replyPreview${id}" class="reply-preview">
+                        <span class="close-btn" onclick="cancelReply(${id})">✕</span>
+                        <div style="color:#00a884; font-weight:bold; margin-bottom:2px;">Yanıtlanıyor...</div>
+                        <div id="replyText${id}" style="color:#bbb;"></div>
+                    </div>
+
                     <div class="row">
                         <input type="text" id="msg${id}" placeholder="Gizli Mesajınız...">
                         <button style="width:70px; margin:0;" onclick="sendMessage(${id})">Gönder</button>

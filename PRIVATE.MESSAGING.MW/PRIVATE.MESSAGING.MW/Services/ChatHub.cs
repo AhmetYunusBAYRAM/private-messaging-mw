@@ -29,7 +29,7 @@ public class ChatHub : Hub
         return base.OnConnectedAsync();
     }
 
-    public async Task<string> SendPrivateMessage(string to, string senderSymKey, string receiverSymKey, string payload)
+    public async Task<string> SendPrivateMessage(string to, string senderSymKey, string receiverSymKey, string payload, string? replyToMessageId = null)
     {
         var myNickname = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(myNickname)) return null;
@@ -61,6 +61,7 @@ public class ChatHub : Hub
         {
             SenderNickname = myNickname,
             ReceiverNickname = to,
+            ReplyToMessageId = replyToMessageId,
             SenderEncryptedSymKey = senderSymKey,
             ReceiverEncryptedSymKey = receiverSymKey,
             EncryptedPayload = payload,
@@ -71,7 +72,7 @@ public class ChatHub : Hub
 
         if (_users.TryGetValue(to, out var targetId))
         {
-            await Clients.Client(targetId).SendAsync("ReceiveMessage", chatMsg.Id, myNickname, receiverSymKey, payload);
+            await Clients.Client(targetId).SendAsync("ReceiveMessage", chatMsg.Id, myNickname, receiverSymKey, payload, replyToMessageId);
         }
 
         return chatMsg.Id;

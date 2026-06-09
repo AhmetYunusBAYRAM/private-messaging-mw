@@ -12,6 +12,8 @@ public class ChatMessage
     public string SenderNickname { get; set; } = string.Empty;
     public string ReceiverNickname { get; set; } = string.Empty;
     
+    public string? ReplyToMessageId { get; set; }
+    
     public string SenderEncryptedSymKey { get; set; } = string.Empty;
     public string ReceiverEncryptedSymKey { get; set; } = string.Empty;
     
