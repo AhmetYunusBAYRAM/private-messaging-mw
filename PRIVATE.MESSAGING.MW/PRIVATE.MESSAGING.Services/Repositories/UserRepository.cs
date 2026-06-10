@@ -31,7 +31,7 @@ public class UserRepository : IUserRepository
     {
         var update = Builders<User>.Update.Set(u => u.ProfilePictureBase64, base64Image);
         var result = await _users.UpdateOneAsync(u => u.Nickname == nickname, update);
-        return result.MatchedCount > 0;
+        return result.IsAcknowledged;
     }
 
     public async Task<(List<User> Users, string? NextCursor, long TotalCount)> SearchContactsAsync(string myNickname, string query, string? cursor, int limit)

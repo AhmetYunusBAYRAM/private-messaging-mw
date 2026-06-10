@@ -24,7 +24,9 @@ public class UserController : ControllerBase
         var nickname = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(nickname)) return Unauthorized();
 
+        Console.WriteLine($"Nickname: {nickname}, PicLen: {request.Base64Image?.Length}");
         var success = await _userService.UpdateProfilePictureAsync(nickname, request.Base64Image);
+        Console.WriteLine($"Success: {success}");
         
         if (!success) return NotFound(new { message = "User not found or picture already set to this value." });
         return Ok(new { message = "Profile picture updated" });
