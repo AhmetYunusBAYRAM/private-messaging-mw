@@ -1,4 +1,4 @@
-# 🔒 PRIVATE.MESSAGING.MW
+# 🔒 PRIVATE.MESSAGING.BACKEND
 
 > **[English](#english) | [Türkçe](#türkçe)**
 
@@ -7,7 +7,7 @@
 <a name="english"></a>
 ## 🇬🇧 English
 
-**An Enterprise-Grade, End-to-End Encrypted (E2EE) real-time private messaging middleware.**  
+**An Enterprise-Grade, End-to-End Encrypted (E2EE) real-time private messaging backend.**  
 Built on ASP.NET Core 6, SignalR, MongoDB, and Redis with a clean N-Tier architecture.
 
 ### 🎯 What is this used for?
@@ -23,10 +23,10 @@ The project has been refactored into a clean N-Tier Architecture to decouple bus
 
 ```
 PRIVATE.MESSAGING.MW/
+├── PRIVATE.MESSAGING.API/        # API Layer (Controllers, SignalR Hub, Middlewares)
 ├── PRIVATE.MESSAGING.Core/       # Entities & Interfaces
 ├── PRIVATE.MESSAGING.DTOs/       # Request / Response models (PagedResponse, etc.)
 ├── PRIVATE.MESSAGING.Services/   # Business Logic (Auth, User, Chat)
-├── PRIVATE.MESSAGING.MW/         # API Layer (Controllers, SignalR Hub, Middlewares)
 └── PRIVATE.MESSAGING.Tests/      # xUnit & Moq based Unit Tests
 ```
 
@@ -109,7 +109,7 @@ Add the following sections to `appsettings.json` or `appsettings.Development.jso
   },
   "Jwt": {
     "Key": "your-super-secret-key-minimum-32-chars",
-    "Issuer": "PrivateMessagingMW",
+    "Issuer": "PrivateMessagingAPI",
     "Audience": "PrivateMessagingClient",
     "AccessTokenExpirationMinutes": 15,
     "RefreshTokenExpirationDays": 30
@@ -132,7 +132,7 @@ docker run --name private-redis -p 6379:6379 -d redis
 
 **2. Run the API:**
 ```bash
-cd PRIVATE.MESSAGING.MW/PRIVATE.MESSAGING.MW
+cd PRIVATE.MESSAGING.MW/PRIVATE.MESSAGING.API
 dotnet restore
 dotnet run
 ```
@@ -150,7 +150,7 @@ dotnet test
 ## 🇹🇷 Türkçe
 
 **Kurumsal Seviyede (Enterprise-Grade), Uçtan uca şifreli (E2EE) gerçek zamanlı özel mesajlaşma altyapısı.**  
-ASP.NET Core 6, SignalR, MongoDB ve Redis üzerine inşa edilmiş, N-Tier (Katmanlı) mimariye sahip bir middleware projesidir.
+ASP.NET Core 6, SignalR, MongoDB ve Redis üzerine inşa edilmiş, N-Tier (Katmanlı) mimariye sahip bir backend projesidir.
 
 ### 🎯 Ne için kullanılır?
 Bu proje; yüksek güvenlikli mesajlaşma uygulamalarının (WhatsApp, Signal, Telegram benzeri) arka plan (backend) motoru olarak tasarlanmıştır. Kullanıcı kimlik doğrulamasını, iletişim aramalarını, gerçek zamanlı çift yönlü veri aktarımını yönetir. Uçtan uca şifreleme (E2EE) sayesinde, **sunucunun dahi atılan mesajları okuyamaması** garanti edilir.
@@ -165,10 +165,10 @@ Proje, iş mantığını, API katmanını ve veritabanı varlıklarını birbiri
 
 ```
 PRIVATE.MESSAGING.MW/
+├── PRIVATE.MESSAGING.API/        # API Katmanı (Controllers, SignalR Hub, Middleware)
 ├── PRIVATE.MESSAGING.Core/       # Varlıklar (Entities) ve Arayüzler (Interfaces)
 ├── PRIVATE.MESSAGING.DTOs/       # İstek/Yanıt modelleri (PagedResponse vb.)
 ├── PRIVATE.MESSAGING.Services/   # İş mantığı (Business Logic)
-├── PRIVATE.MESSAGING.MW/         # API Katmanı (Controllers, SignalR Hub, Middleware)
 └── PRIVATE.MESSAGING.Tests/      # xUnit ve Moq tabanlı Birim Testleri
 ```
 
@@ -251,7 +251,7 @@ Sistemde **MongoDB** ve **Redis** kurulu ve çalışıyor olmalıdır.
   },
   "Jwt": {
     "Key": "your-super-secret-key-minimum-32-chars",
-    "Issuer": "PrivateMessagingMW",
+    "Issuer": "PrivateMessagingAPI",
     "Audience": "PrivateMessagingClient",
     "AccessTokenExpirationMinutes": 15,
     "RefreshTokenExpirationDays": 30
@@ -274,7 +274,7 @@ docker run --name private-redis -p 6379:6379 -d redis
 
 **2. Uygulamayı Çalıştırmak İçin:**
 ```bash
-cd PRIVATE.MESSAGING.MW/PRIVATE.MESSAGING.MW
+cd PRIVATE.MESSAGING.MW/PRIVATE.MESSAGING.API
 dotnet restore
 dotnet run
 ```
