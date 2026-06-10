@@ -1,4 +1,4 @@
-﻿{
+{
   "$schema": "https://json.schemastore.org/launchsettings.json",
   "iisSettings": {
     "windowsAuthentication": false,
@@ -9,7 +9,7 @@
     }
   },
   "profiles": {
-    "PRIVATE.MESSAGING.MW": {
+    "PRIVATE.MESSAGING.API": {
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": true,

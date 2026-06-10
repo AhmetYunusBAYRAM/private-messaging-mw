@@ -23,7 +23,7 @@ The project has been refactored into a clean N-Tier Architecture to decouple bus
 
 ```
 PRIVATE.MESSAGING.MW/
-├── PRIVATE.MESSAGING.API/        # API Layer (Controllers, SignalR Hub, Middlewares)
+├── PRIVATE.MESSAGING.API/        # API Layer (Controllers, SignalR Hub)
 ├── PRIVATE.MESSAGING.Core/       # Entities & Interfaces
 ├── PRIVATE.MESSAGING.DTOs/       # Request / Response models (PagedResponse, etc.)
 ├── PRIVATE.MESSAGING.Services/   # Business Logic (Auth, User, Chat)
@@ -165,7 +165,7 @@ Proje, iş mantığını, API katmanını ve veritabanı varlıklarını birbiri
 
 ```
 PRIVATE.MESSAGING.MW/
-├── PRIVATE.MESSAGING.API/        # API Katmanı (Controllers, SignalR Hub, Middleware)
+├── PRIVATE.MESSAGING.API/        # API Katmanı (Controllers, SignalR Hub)
 ├── PRIVATE.MESSAGING.Core/       # Varlıklar (Entities) ve Arayüzler (Interfaces)
 ├── PRIVATE.MESSAGING.DTOs/       # İstek/Yanıt modelleri (PagedResponse vb.)
 ├── PRIVATE.MESSAGING.Services/   # İş mantığı (Business Logic)
